@@ -1,0 +1,19 @@
+{
+  "name": "palimpsest",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "p5": "2.3.4"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3",
+    "vite": "7.0.2"
+  }
+}
