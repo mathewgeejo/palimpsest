@@ -373,6 +373,12 @@ export class Controls {
       } else if (event.key === 'Home') {
         event.preventDefault();
         this.callbacks.onRestart();
+      } else if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && this.engine.duration > 0) {
+        event.preventDefault();
+        const step = event.shiftKey ? 15 : 5;
+        const delta = event.key === 'ArrowLeft' ? -step : step;
+        this.callbacks.onSeek(Math.max(0, Math.min(this.engine.duration, this.engine.currentTime + delta)));
+        this.showSeekHint();
       }
     });
     this.bar.addEventListener('pointerenter', () => this.clearFadeTimer());

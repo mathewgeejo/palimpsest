@@ -65,6 +65,20 @@ function addKick(context: OfflineAudioContext, destination: AudioNode, time: num
   oscillator.stop(time + 0.31);
 }
 
+function addClick(context: OfflineAudioContext, destination: AudioNode, time: number, level: number): void {
+  const oscillator = context.createOscillator();
+  const voice = context.createGain();
+  oscillator.type = 'sine';
+  oscillator.frequency.setValueAtTime(2200, time);
+  oscillator.frequency.exponentialRampToValueAtTime(880, time + 0.018);
+  voice.gain.setValueAtTime(0.0001, time);
+  voice.gain.exponentialRampToValueAtTime(level, time + 0.002);
+  voice.gain.exponentialRampToValueAtTime(0.0001, time + 0.036);
+  oscillator.connect(voice).connect(destination);
+  oscillator.start(time);
+  oscillator.stop(time + 0.04);
+}
+
 function addPluck(
   context: OfflineAudioContext,
   destination: AudioNode,
@@ -142,6 +156,7 @@ export async function renderDemo(): Promise<Blob> {
   addPad(context, opening, 146.83, 0.5, 14, 0.095, 'triangle', 3);
   addPad(context, opening, 220, 4.3, 14, 0.06, 'sine', -2);
   addPad(context, opening, 293.66, 8.5, 14, 0.045, 'triangle', 4);
+  addPad(context, opening, 440, 1.8, 14, 0.022, 'sine', -6);
 
   const pulses = makeSection(context, master, 14, 48, 0.63, 1.3, 1.4);
   const drone = context.createOscillator();
@@ -191,15 +206,21 @@ export async function renderDemo(): Promise<Blob> {
     if (random() > 0.62) {
       addKick(context, percussion, time, 0.19);
     }
+    if (random() > 0.5) {
+      addClick(context, percussion, time + 0.11, 0.075);
+    }
   }
 
   const ending = makeSection(context, master, 60, 70, 0.32, 0.9, 2.5);
   addPad(context, ending, 146.83, 60.1, 70, 0.09, 'sine', 1);
 
   const rendered = await context.startRendering();
+  const channels = [
+    rendered.getChannelData(0),
+    rendered.getChannelData(1),
+  ];
   let peak = 0;
-  for (let channel = 0; channel < rendered.numberOfChannels; channel += 1) {
-    const samples = rendered.getChannelData(channel);
+  for (const samples of channels) {
     for (let index = 0; index < samples.length; index += 1) {
       peak = Math.max(peak, Math.abs(samples[index]!));
     }
@@ -229,8 +250,8 @@ export async function renderDemo(): Promise<Blob> {
 
   let offset = 44;
   for (let index = 0; index < rendered.length; index += 1) {
-    for (let channel = 0; channel < rendered.numberOfChannels; channel += 1) {
-      const sample = Math.max(-1, Math.min(1, rendered.getChannelData(channel)[index]! * scale));
+    for (let channel = 0; channel < channels.length; channel += 1) {
+      const sample = Math.max(-1, Math.min(1, channels[channel]![index]! * scale));
       view.setInt16(offset, sample < 0 ? sample * 32768 : sample * 32767, true);
       offset += 2;
     }
