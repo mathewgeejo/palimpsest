@@ -68,6 +68,20 @@ The membrane is drawn additively into a depth-less framebuffer, then composited 
 
 `window.__palimpsest.stats` exposes fps, rows, chunks, vertices and canvas/scene sizes for inspection.
 
+## Rupture mode (loud)
+
+Switch with **Mode** in settings or `M`. Same audio analysis, opposite temperament: a full-screen feedback painting instead of a calm sculpture.
+
+- Every frame is resampled into the next through a curl-noise flow field — **bass** sets how violently the past is smeared, **low-mid** pulls trails outward.
+- Three ribbons, one per band (bass / low-mid / high-mid), are painted into a **kaleidoscope**. Each **onset** snaps it to a new symmetry (1–8 folds), fires a shockwave ring that tears the image, draws a jagged white tear, and sometimes switches the palette (vermilion / acid yellow / ultramarine and three others).
+- **Treble** shoves horizontal slices sideways (glitch), splits RGB along the flow, and throws cross-shaped sparks.
+- Trails age by hue rotation; **Memory** sets the feedback decay, **Tension** the warp strength, **Detail** the noise scale, slice and spark density; **Camera: drift** adds a slow spin.
+- Very strong onsets invert the frame briefly — capped at one flash per 0.45 s. **Reduced motion** disables flashes, glitch slicing and spin, and damps warp and shocks.
+- The membrane history keeps growing underneath, so switching back with `M` shows the sculpture of the same listening.
+- Quality sets the feedback buffer scale (0.5 / 0.75 / 1 × density, half-float when available) and bloom taps. Pause freezes the painting; PNG export captures it.
+
+![Rupture](docs/screenshots/rupture.jpg)
+
 ## Verification (actual results)
 
 Tested in Chrome via CDP automation on a Linux VM **with software WebGL (SwiftShader, no GPU)** at 1440×860, so absolute frame rates are pessimistic.
@@ -85,7 +99,11 @@ Tested in Chrome via CDP automation on a Linux VM **with software WebGL (SwiftSh
 11. **Repeated track changes** — 8 consecutive uploads: chunks stayed at 2–4 and JS heap fluctuated 27–47 MB with no upward trend; object URLs are revoked on replacement.
 12. **Build** — `npm run build` passes (strict `tsc` + Vite) with no console errors or failed requests during the runs above. Tension and Detail were also checked by screenshot comparison.
 
+13. **Rupture mode** — ran through the demo with no console errors; onsets switched folds/palettes and fired shocks; pause froze the painting; PNG export non-blank (mean luminance 48); Low quality used a 720×430 buffer at ~42 fps vs 1080×645 at ~10–16 fps on Medium; switching quality while paused kept the painting; `M` toggled back to the membrane, whose history had kept growing.
+
 ## Known limitations
+
+- Rupture contains bright onset flashes and fast motion; enable Reduced motion if that is a concern. On software WebGL it ran at ~10 fps at Medium.
 
 - Performance was measured only on software WebGL; on a CPU rasteriser a long, full-memory history at Medium runs at ~10 fps (167k vertices). Real GPUs should be far faster but were not measured here. Use Low on weak hardware.
 - WebGL2 is required; without it an error message is shown.

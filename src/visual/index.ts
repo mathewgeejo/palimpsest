@@ -2,6 +2,7 @@ import p5 from 'p5';
 import type { AudioFeatures, FeatureSource, Quality, VisualSettings } from '../types';
 import { createEmptyFeatures } from '../types';
 import { Membrane, MAX_ROWS, MIN_VISIBLE_ROWS, ROW_RATE } from './membrane';
+import { Rupture } from './rupture';
 import { membraneFrag, membraneVert, postFrag, postVert } from './shaders';
 
 export interface Visualiser {
@@ -64,6 +65,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
 
   return new Promise<Visualiser>((resolve, reject) => {
     let membrane: Membrane;
+    let rupture: Rupture | null = null;
     let memShader: p5.Shader;
     let postShader: p5.Shader;
     let scene: p5.Framebuffer;
@@ -121,6 +123,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         // An explicit density opts the buffer out of p5's auto-sizing, so resizes are handled below.
         scene.pixelDensity(density * q.sceneScale);
         stats.quality = settings.quality;
+        rupture?.configure(settings.quality, density);
         membrane?.invalidate();
       };
 
@@ -142,6 +145,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         try {
           memShader = p.createShader(membraneVert, membraneFrag);
           postShader = p.createShader(postVert, postFrag);
+          rupture = new Rupture(p);
         } catch (e) {
           fail('The visualiser shaders failed to compile on this device.', e);
           p.noLoop();
@@ -156,6 +160,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         canvas.setAttribute('aria-label', 'PALIMPSEST sculpture');
         canvas.setAttribute('role', 'img');
         membrane = new Membrane(p, seed);
+        rupture?.reset(seed);
         configureQuality();
         lastWall = performance.now();
         resolve(api);
@@ -166,6 +171,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         if (w !== p.width || h !== p.height) {
           p.resizeCanvas(w, h);
           scene?.resize(w, h);
+          rupture?.resize(w, h);
         }
       };
 
@@ -240,6 +246,16 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
           membrane.invalidate();
         }
         membrane.update(buildParams(), QUALITY[settings.quality].rebuildBudget);
+
+        if (settings.mode === 'rupture' && rupture) {
+          rupture.frame(features, dt, playing, settings, QUALITY[settings.quality].glowTaps);
+          stats.rows = membrane.total;
+          stats.chunks = membrane.chunkCount;
+          stats.canvas = [p.width * p.pixelDensity(), p.height * p.pixelDensity()];
+          stats.scene = rupture.bufferSize;
+          snapView = true;
+          return;
+        }
 
         const visible = MIN_VISIBLE_ROWS + settings.memory * (MAX_ROWS - MIN_VISIBLE_ROWS);
         const head = membrane.total > 0 ? membrane.total - 1 + headFrac : 0;
@@ -348,6 +364,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
       reset(newSeed: number) {
         seed = newSeed >>> 0;
         membrane?.reset(seed);
+        rupture?.reset(seed);
         lastAudioT = -1;
         headFrac = 0;
         quiet = 0;
@@ -373,6 +390,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
       destroy() {
         resizeObserver.disconnect();
         membrane?.reset(0);
+        rupture?.destroy();
         instance.remove();
       },
     };

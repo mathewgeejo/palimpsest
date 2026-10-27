@@ -26,9 +26,12 @@ export interface FeatureSource {
 }
 
 export type CameraMode = 'still' | 'drift';
+/** membrane = calm translucent sculpture; rupture = loud feedback painting. */
+export type VisualMode = 'membrane' | 'rupture';
 export type Quality = 'low' | 'medium' | 'high';
 
 export interface VisualSettings {
+  mode: VisualMode;
   /** 0..1, fraction of the maximum history length that is visible. */
   memory: number;
   /** 0..1, strength of large deformations. */
