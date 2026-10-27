@@ -26,8 +26,8 @@ export interface FeatureSource {
 }
 
 export type CameraMode = 'still' | 'drift';
-/** membrane = calm translucent sculpture; rupture = loud feedback painting. */
-export type VisualMode = 'membrane' | 'rupture';
+/** membrane = calm translucent sculpture; rupture = loud feedback painting; splat = Gaussian-splat cloud. */
+export type VisualMode = 'membrane' | 'rupture' | 'splat';
 export type Quality = 'low' | 'medium' | 'high';
 
 export interface VisualSettings {

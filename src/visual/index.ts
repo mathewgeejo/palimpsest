@@ -3,6 +3,7 @@ import type { AudioFeatures, FeatureSource, Quality, VisualSettings } from '../t
 import { createEmptyFeatures } from '../types';
 import { Membrane, MAX_ROWS, MIN_VISIBLE_ROWS, ROW_RATE } from './membrane';
 import { Rupture } from './rupture';
+import { Splats } from './splats';
 import { membraneFrag, membraneVert, postFrag, postVert } from './shaders';
 
 export interface Visualiser {
@@ -49,6 +50,7 @@ function approach(cur: number, target: number, dt: number, tau: number) {
 export interface VisualStats {
   fps: number;
   visibleRows: number;
+  splats: number;
   frameRadius: number;
   frameMs: number;
   rows: number;
@@ -66,6 +68,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
   return new Promise<Visualiser>((resolve, reject) => {
     let membrane: Membrane;
     let rupture: Rupture | null = null;
+    let splats: Splats | null = null;
     let memShader: p5.Shader;
     let postShader: p5.Shader;
     let scene: p5.Framebuffer;
@@ -91,7 +94,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
     let exportResolvers: { resolve: (b: Blob) => void; reject: (e: Error) => void }[] = [];
     const stats: VisualStats = {
       fps: 0, frameMs: 0, rows: 0, chunks: 0, vertices: 0, quality: settings.quality, canvas: [0, 0], scene: [0, 0],
-      visibleRows: 0, frameRadius: 0,
+      visibleRows: 0, splats: 0, frameRadius: 0,
     };
 
     const fail = (msg: string, err?: unknown) => {
@@ -124,6 +127,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         scene.pixelDensity(density * q.sceneScale);
         stats.quality = settings.quality;
         rupture?.configure(settings.quality, density);
+        splats?.setQuality(settings.quality);
         membrane?.invalidate();
       };
 
@@ -146,6 +150,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
           memShader = p.createShader(membraneVert, membraneFrag);
           postShader = p.createShader(postVert, postFrag);
           rupture = new Rupture(p);
+          splats = new Splats(p);
         } catch (e) {
           fail('The visualiser shaders failed to compile on this device.', e);
           p.noLoop();
@@ -161,6 +166,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         canvas.setAttribute('role', 'img');
         membrane = new Membrane(p, seed);
         rupture?.reset(seed);
+        splats?.reset(seed);
         configureQuality();
         lastWall = performance.now();
         resolve(api);
@@ -222,6 +228,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
           let emitted = 0;
           while (t >= nextRowT && emitted < 4) {
             membrane.emit(features, 1 / ROW_RATE, nextRowT);
+            splats?.emit(features, nextRowT, settings);
             lastRowT = nextRowT;
             nextRowT += 1 / ROW_RATE;
             emitted++;
@@ -295,7 +302,10 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         p.clear();
         p.perspective(FOV, w / h, camZ * 0.1, camZ * 10);
         p.camera(0, 0, camZ, 0, 0, 0, 0, 1, 0);
-        if (membrane.total > 1) {
+        if (settings.mode === 'splat' && splats) {
+          splats.draw(settings, dt, w, h, lastRowT + headFrac / ROW_RATE, playing);
+          stats.splats = splats.count;
+        } else if (membrane.total > 1) {
           p.push();
           p.noStroke();
           p.blendMode(p.ADD);
@@ -334,7 +344,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         postShader.setUniform('uRes', [w, h]);
         postShader.setUniform('uGlow', q.glowTaps > 0 ? 0.55 : 0);
         postShader.setUniform('uGlowTaps', q.glowTaps);
-        postShader.setUniform('uExposure', 1.35);
+        postShader.setUniform('uExposure', settings.mode === 'splat' ? 1.05 : 1.35);
         postShader.setUniform('uGrain', 0.018);
         postShader.setUniform('uSeed', settings.reducedMotion ? 0 : (p.frameCount % 61) * 7.31);
         postShader.setUniform('uFlipY', 0);
@@ -365,6 +375,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         seed = newSeed >>> 0;
         membrane?.reset(seed);
         rupture?.reset(seed);
+        splats?.reset(seed);
         lastAudioT = -1;
         headFrac = 0;
         quiet = 0;
@@ -391,6 +402,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         resizeObserver.disconnect();
         membrane?.reset(0);
         rupture?.destroy();
+        splats?.destroy();
         instance.remove();
       },
     };

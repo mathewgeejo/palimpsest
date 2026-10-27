@@ -22,7 +22,7 @@ npm run typecheck
 
 Open the page, then **Try with sound** (a procedurally generated 70 s study) or **Choose audio** / drag a file anywhere onto the page.
 
-Keyboard: `Space` play/pause · `F` fullscreen · `Home` restart · `M` toggle visual mode · `←`/`→` seek 5 s (`Shift` = 15 s).
+Keyboard: `Space` play/pause · `F` fullscreen · `Home` restart · `M` cycle visual mode · `←`/`→` seek 5 s (`Shift` = 15 s).
 
 ## How sound becomes shape
 
@@ -67,6 +67,18 @@ The membrane is drawn additively into a depth-less framebuffer, then composited 
 | High | 144 | 1 | 2 | 1 | 12 |
 
 `window.__palimpsest.stats` exposes fps, rows, chunks, vertices and canvas/scene sizes for inspection.
+
+## Splat mode (Gaussian cloud)
+
+Third mode (**Mode → Splat**, or `M` cycles Membrane → Rupture → Splat). The music becomes a cloud of anisotropic 3D Gaussians (`src/visual/splats.ts`):
+
+- A luminous head wanders through space, steered by bass, spectral change and **Tension**; every 1/24 s of audio it sheds splats around itself.
+- **Bass** → broad, faint ember/gold clouds; **low/high-mid** → elongated rose/ivory petals aligned with the direction of travel; **treble** → tiny teal/ice needle sparks (density from **Detail**); **onsets** → a burst of hot splats thrown outward that drift and settle as they age, plus a brief swell of fresh splats.
+- Each splat is a camera-facing-free oriented ellipse (two 3D axis vectors) evaluated as a Gaussian in the fragment shader. Splats are stored in 0.5 s chunks (retained `p5.Geometry` with custom attributes) and chunks are drawn back-to-front with premultiplied alpha — coarse depth sorting, not per-splat.
+- **Memory** sets the visible window (8–60 s; older splats fade); **Quality** sets splats per row (10 / 24 / 40); **Camera: drift** orbits; **Reduced motion** stops the orbit and damps drift and pulses.
+- Verified on the demo: ~22k splats at 0:55 on Medium, no console errors, ~10 fps on software WebGL.
+
+![Splat](docs/screenshots/splat.jpg)
 
 ## Rupture mode (loud)
 

@@ -103,6 +103,7 @@ export class Controls {
           <select id="setting-mode">
             <option value="membrane" selected>Membrane — calm</option>
             <option value="rupture">Rupture — loud</option>
+            <option value="splat">Splat — Gaussian cloud</option>
           </select>
         </div>
         <div class="setting-row">
@@ -350,6 +351,7 @@ export class Controls {
 
   private syncModeClass(): void {
     document.body.classList.toggle('mode-rupture', this.settings.mode === 'rupture');
+    document.body.classList.toggle('mode-splat', this.settings.mode === 'splat');
   }
 
   private toggleDrawer(): void {
@@ -367,7 +369,7 @@ export class Controls {
   }
 
   private showModeHint(mode: VisualMode): void {
-    this.showHint(mode === 'rupture' ? 'Rupture' : 'Membrane', 1500);
+    this.showHint({ membrane: 'Membrane', rupture: 'Rupture', splat: 'Splat' }[mode], 1500);
   }
 
   private showHint(message: string, duration: number): void {
@@ -412,7 +414,8 @@ export class Controls {
         this.callbacks.onFullscreen();
       } else if (event.key.toLowerCase() === 'm' && !event.shiftKey) {
         event.preventDefault();
-        this.setMode(this.settings.mode === 'membrane' ? 'rupture' : 'membrane');
+        const order: VisualMode[] = ['membrane', 'rupture', 'splat'];
+        this.setMode(order[(order.indexOf(this.settings.mode) + 1) % order.length]);
       } else if (event.key === 'Home') {
         event.preventDefault();
         this.callbacks.onRestart();
