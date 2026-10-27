@@ -1,5 +1,5 @@
 import type { AudioEngine } from '../audio/engine';
-import type { CameraMode, Quality, VisualSettings } from '../types';
+import type { CameraMode, Quality, VisualMode, VisualSettings } from '../types';
 
 export interface ControlCallbacks {
   onPlayToggle(): void;
@@ -39,6 +39,8 @@ function formatTime(seconds: number): string {
   return `${minutes}:${remainder}`;
 }
 
+const SEEK_HINT_TEXT = 'Seeking clears the memory — the shape regrows from here.';
+
 export class Controls {
   readonly settings: VisualSettings;
   private readonly app: HTMLElement;
@@ -62,6 +64,7 @@ export class Controls {
   constructor(private readonly engine: AudioEngine, callbacks: ControlCallbacks) {
     this.callbacks = callbacks;
     this.settings = {
+      mode: 'membrane',
       memory: 0.6,
       tension: 0.5,
       detail: 0.6,
@@ -94,6 +97,13 @@ export class Controls {
         <div class="drawer-heading">
           <h2>Settings</h2>
           <button class="icon-button drawer-close" id="close-settings" type="button" aria-label="Close settings" title="Close settings">${svg(icons.close)}</button>
+        </div>
+        <div class="setting-row select-row">
+          <label for="setting-mode">Mode</label>
+          <select id="setting-mode">
+            <option value="membrane" selected>Membrane — calm</option>
+            <option value="rupture">Rupture — loud</option>
+          </select>
         </div>
         <div class="setting-row">
           <label for="setting-memory">Memory <output id="memory-value">0.60</output></label>
@@ -211,6 +221,9 @@ export class Controls {
     this.required<HTMLButtonElement>('#close-settings').addEventListener('click', () => this.setDrawerOpen(false));
     this.required<HTMLButtonElement>('#dismiss-toast').addEventListener('click', () => this.toast.setAttribute('hidden', ''));
 
+    this.required<HTMLSelectElement>('#setting-mode').addEventListener('change', (event) => {
+      this.setMode((event.currentTarget as HTMLSelectElement).value as VisualMode);
+    });
     this.bindSettingRange('memory', '#setting-memory');
     this.bindSettingRange('tension', '#setting-tension');
     this.bindSettingRange('detail', '#setting-detail');
@@ -228,6 +241,7 @@ export class Controls {
     this.bindActivityAndKeyboard();
     this.bindDropHandling();
     document.addEventListener('fullscreenchange', () => this.updateFullscreenButton());
+    this.syncModeClass();
   }
 
   updatePlaybackState(): void {
@@ -322,7 +336,20 @@ export class Controls {
 
   private updateSetting<K extends keyof VisualSettings>(key: K, value: VisualSettings[K]): void {
     this.settings[key] = value;
+    if (key === 'mode') {
+      this.required<HTMLSelectElement>('#setting-mode').value = this.settings.mode;
+      this.syncModeClass();
+    }
     this.callbacks.onSettingsChange({ [key]: value });
+  }
+
+  private setMode(mode: VisualMode): void {
+    this.updateSetting('mode', mode);
+    this.showModeHint(mode);
+  }
+
+  private syncModeClass(): void {
+    document.body.classList.toggle('mode-rupture', this.settings.mode === 'rupture');
   }
 
   private toggleDrawer(): void {
@@ -336,11 +363,24 @@ export class Controls {
   }
 
   private showSeekHint(): void {
+    this.showHint(SEEK_HINT_TEXT, 3000);
+  }
+
+  private showModeHint(mode: VisualMode): void {
+    this.showHint(mode === 'rupture' ? 'Rupture' : 'Membrane', 1500);
+  }
+
+  private showHint(message: string, duration: number): void {
+    this.seekHint.textContent = message;
     this.seekHint.classList.add('is-visible');
     if (this.hintTimer !== null) {
       window.clearTimeout(this.hintTimer);
     }
-    this.hintTimer = window.setTimeout(() => this.seekHint.classList.remove('is-visible'), 3000);
+    this.hintTimer = window.setTimeout(() => {
+      this.seekHint.classList.remove('is-visible');
+      this.seekHint.textContent = SEEK_HINT_TEXT;
+      this.hintTimer = null;
+    }, duration);
   }
 
   private bindActivityAndKeyboard(): void {
@@ -370,6 +410,9 @@ export class Controls {
       } else if (event.key.toLowerCase() === 'f') {
         event.preventDefault();
         this.callbacks.onFullscreen();
+      } else if (event.key.toLowerCase() === 'm' && !event.shiftKey) {
+        event.preventDefault();
+        this.setMode(this.settings.mode === 'membrane' ? 'rupture' : 'membrane');
       } else if (event.key === 'Home') {
         event.preventDefault();
         this.callbacks.onRestart();

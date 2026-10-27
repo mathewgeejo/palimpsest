@@ -22,7 +22,7 @@ npm run typecheck
 
 Open the page, then **Try with sound** (a procedurally generated 70 s study) or **Choose audio** / drag a file anywhere onto the page.
 
-Keyboard: `Space` play/pause · `F` fullscreen · `Home` restart · `←`/`→` seek 5 s (`Shift` = 15 s).
+Keyboard: `Space` play/pause · `F` fullscreen · `Home` restart · `M` toggle visual mode · `←`/`→` seek 5 s (`Shift` = 15 s).
 
 ## How sound becomes shape
 
