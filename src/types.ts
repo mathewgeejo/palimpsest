@@ -23,11 +23,17 @@ export interface FeatureSource {
   readonly currentTime: number;
   /** Analyse the current audio and write into `out` (no allocation). dt in seconds of wall time. */
   analyse(out: AudioFeatures, dt: number): void;
+  /** Latest time-domain window (FFT_SIZE samples, -1..1), refreshed by analyse(). */
+  readonly waveform: Float32Array;
 }
 
 export type CameraMode = 'still' | 'drift';
-/** membrane = calm translucent sculpture; rupture = loud feedback painting; splat = Gaussian-splat cloud. */
-export type VisualMode = 'membrane' | 'rupture' | 'splat';
+/**
+ * membrane = calm translucent sculpture; rupture = loud feedback painting; splat = Gaussian-splat cloud;
+ * suminagashi = exact ink marbling; morphogen = reaction–diffusion; phosphor = delay-embedding scope;
+ * chladni = standing-wave sand plate.
+ */
+export type VisualMode = 'membrane' | 'rupture' | 'splat' | 'suminagashi' | 'morphogen' | 'phosphor' | 'chladni';
 export type Quality = 'low' | 'medium' | 'high';
 
 export interface VisualSettings {

@@ -151,6 +151,10 @@ export class AudioEngine implements FeatureSource {
     return this.currentTrack;
   }
 
+  get waveform(): Float32Array {
+    return this.timeData;
+  }
+
   on<K extends EngineEvent>(event: K, callback: EventCallback<K>): () => void {
     let callbacks = this.listeners.get(event);
     if (!callbacks) {

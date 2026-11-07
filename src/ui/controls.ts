@@ -1,5 +1,6 @@
 import type { AudioEngine } from '../audio/engine';
 import type { CameraMode, Quality, VisualMode, VisualSettings } from '../types';
+import { ROOMS, ROOM_ORDER, roomInfo } from './rooms';
 
 export interface ControlCallbacks {
   onPlayToggle(): void;
@@ -40,6 +41,7 @@ function formatTime(seconds: number): string {
 }
 
 const SEEK_HINT_TEXT = 'Seeking clears the memory — the shape regrows from here.';
+const PLACARD_SECONDS = 7;
 
 export class Controls {
   readonly settings: VisualSettings;
@@ -55,9 +57,11 @@ export class Controls {
   private readonly drawer: HTMLElement;
   private readonly seekHint: HTMLElement;
   private readonly toast: HTMLElement;
+  private readonly placard: HTMLElement;
   private readonly callbacks: ControlCallbacks;
   private fadeTimer: number | null = null;
   private hintTimer: number | null = null;
+  private placardTimer: number | null = null;
   private draggingSeek = false;
   private previousPlaying = false;
 
@@ -78,33 +82,58 @@ export class Controls {
       throw new Error('The application root is missing.');
     }
     this.app = root;
+    const roomCards = ROOMS.map((room) => `
+            <li>
+              <button class="room-card" type="button" data-mode="${room.mode}" aria-pressed="false">
+                <span class="room-num">${room.numeral}</span>
+                <span class="room-title">${room.title}</span>
+                <span class="room-medium">${room.medium}</span>
+              </button>
+            </li>`).join('');
+    const roomPips = ROOMS.map((room, index) => `
+              <button class="room-pip" type="button" data-mode="${room.mode}" aria-pressed="false" aria-label="Room ${room.numeral}, ${room.title}" title="${room.numeral} · ${room.title}  (${index + 1})">${room.numeral}</button>`).join('');
+    const modeOptions = ROOMS.map((room) => `<option value="${room.mode}">${room.numeral} · ${room.title}</option>`).join('');
     this.app.innerHTML = `
-      <button class="wordmark" id="wordmark" type="button" aria-label="Open PALIMPSEST choices">PALIMPSEST</button>
+      <button class="wordmark" id="wordmark" type="button" aria-label="Open the PALIMPSEST entrance">PALIMPSEST</button>
       <section class="welcome" id="welcome" aria-labelledby="welcome-title">
+        <div class="welcome-meta" aria-hidden="true">
+          <span>An exhibition of listening</span>
+          <span>${ROOMS.length} rooms</span>
+          <span>Sound never leaves this device</span>
+        </div>
         <div class="welcome-content">
-          <p class="eyebrow">An instrument for attentive listening</p>
+          <p class="eyebrow">Now showing <span class="eyebrow-rule" aria-hidden="true"></span> <span id="welcome-now"></span></p>
           <h1 id="welcome-title">PALIMPSEST</h1>
-          <p class="welcome-line">Your music leaves a shape.</p>
+          <p class="welcome-line">Every sound leaves a mark. Every song builds a different world.</p>
           <div class="welcome-actions">
-            <button class="button button-primary" id="try-demo" type="button">Try with sound</button>
-            <button class="button button-quiet" id="choose-audio" type="button">Choose audio file</button>
+            <button class="button button-primary" id="try-demo" type="button">Enter with the study <span class="button-note">70 s</span></button>
+            <button class="button button-quiet" id="choose-audio" type="button">Bring your own sound</button>
+            <button class="button button-quiet" id="return-room" type="button" hidden>Return to the room</button>
           </div>
           <input class="file-input" id="audio-file" type="file" accept="audio/*" aria-label="Choose an audio file" />
-          <p class="welcome-hint">or drop an audio file anywhere <span aria-hidden="true">·</span> audio stays on your device</p>
+          <p class="welcome-hint">or drop an audio file anywhere <span aria-hidden="true">·</span> keys <kbd>1</kbd>–<kbd>${ROOMS.length}</kbd> change rooms</p>
         </div>
+        <nav class="catalogue" aria-label="Rooms">
+          <p class="catalogue-caption" id="catalogue-caption" aria-live="polite"></p>
+          <ol class="catalogue-list">${roomCards}
+          </ol>
+        </nav>
       </section>
+      <aside class="placard" id="placard" aria-live="polite" aria-hidden="true">
+        <p class="placard-num" id="placard-num"></p>
+        <h2 class="placard-title" id="placard-title"></h2>
+        <p class="placard-medium" id="placard-medium"></p>
+        <p class="placard-note" id="placard-note"></p>
+        <p class="placard-track" id="placard-track"></p>
+      </aside>
       <aside class="settings-drawer" id="settings-drawer" aria-label="Visual settings" aria-hidden="true">
         <div class="drawer-heading">
           <h2>Settings</h2>
           <button class="icon-button drawer-close" id="close-settings" type="button" aria-label="Close settings" title="Close settings">${svg(icons.close)}</button>
         </div>
         <div class="setting-row select-row">
-          <label for="setting-mode">Mode</label>
-          <select id="setting-mode">
-            <option value="membrane" selected>Membrane — calm</option>
-            <option value="rupture">Rupture — loud</option>
-            <option value="splat">Splat — Gaussian cloud</option>
-          </select>
+          <label for="setting-mode">Room</label>
+          <select id="setting-mode">${modeOptions}</select>
         </div>
         <div class="setting-row">
           <label for="setting-memory">Memory <output id="memory-value">0.60</output></label>
@@ -157,7 +186,11 @@ export class Controls {
               <input class="seek-range" id="seek-range" type="range" min="0" max="1000" step="1" value="0" aria-label="Seek through track" />
               <span class="time-readout" id="duration">0:00</span>
             </div>
-            <div class="track-title" id="track-title" title="No track loaded">No track loaded</div>
+            <div class="track-row">
+              <div class="track-title" id="track-title" title="No track loaded">No track loaded</div>
+              <div class="room-switcher" role="group" aria-label="Rooms">${roomPips}
+              </div>
+            </div>
           </div>
           <div class="utility-controls">
             <label class="volume-control" for="volume-range">
@@ -185,10 +218,15 @@ export class Controls {
     this.drawer = this.required('#settings-drawer');
     this.seekHint = this.required('#seek-hint');
     this.toast = this.required('#toast');
+    this.placard = this.required('#placard');
 
     this.required<HTMLButtonElement>('#try-demo').addEventListener('click', () => callbacks.onTryDemo());
     this.required<HTMLButtonElement>('#choose-audio').addEventListener('click', () => callbacks.onChooseFile());
+    this.required<HTMLButtonElement>('#return-room').addEventListener('click', () => this.setWelcomeVisible(false));
     this.required<HTMLButtonElement>('#wordmark').addEventListener('click', () => this.setWelcomeVisible(true));
+    this.app.querySelectorAll<HTMLButtonElement>('button[data-mode]').forEach((button) => {
+      button.addEventListener('click', () => this.setMode(button.dataset.mode as VisualMode));
+    });
     this.required<HTMLInputElement>('#audio-file').addEventListener('change', (event) => {
       const input = event.currentTarget as HTMLInputElement;
       const file = input.files?.[0];
@@ -243,6 +281,7 @@ export class Controls {
     this.bindDropHandling();
     document.addEventListener('fullscreenchange', () => this.updateFullscreenButton());
     this.syncModeClass();
+    this.setWelcomeVisible(true);
   }
 
   updatePlaybackState(): void {
@@ -287,8 +326,16 @@ export class Controls {
   }
 
   setWelcomeVisible(visible: boolean): void {
+    const wasVisible = document.body.classList.contains('welcome-open');
     this.welcome.classList.toggle('is-hidden', !visible);
     this.welcome.setAttribute('aria-hidden', String(!visible));
+    document.body.classList.toggle('welcome-open', visible);
+    this.required('#return-room').hidden = !this.engine.track;
+    if (visible) {
+      this.hidePlacard();
+    } else if (wasVisible) {
+      this.showPlacard();
+    }
   }
 
   updateFullscreenButton(): void {
@@ -304,6 +351,7 @@ export class Controls {
     this.engine.on('trackchange', (track) => {
       this.setTrack(track);
       this.updatePlaybackState();
+      this.required('#return-room').hidden = false;
     });
     this.engine.on('timeupdate', () => {
       this.updateTime();
@@ -346,12 +394,47 @@ export class Controls {
 
   private setMode(mode: VisualMode): void {
     this.updateSetting('mode', mode);
-    this.showModeHint(mode);
+    if (!document.body.classList.contains('welcome-open')) {
+      this.showPlacard();
+    }
   }
 
   private syncModeClass(): void {
-    document.body.classList.toggle('mode-rupture', this.settings.mode === 'rupture');
-    document.body.classList.toggle('mode-splat', this.settings.mode === 'splat');
+    const mode = this.settings.mode;
+    const room = roomInfo(mode);
+    document.body.dataset.mode = mode;
+    this.app.querySelectorAll<HTMLButtonElement>('button[data-mode]').forEach((button) => {
+      button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
+    });
+    this.required('#welcome-now').textContent = `Room ${room.numeral}, ${room.title}`;
+    this.required('#catalogue-caption').innerHTML =
+      `<span class="caption-num">${room.numeral}</span> <em>${room.title}.</em> ${room.note}`;
+  }
+
+  /** The wall label beside the work: shown on entering a room, then it fades. */
+  private showPlacard(): void {
+    const room = roomInfo(this.settings.mode);
+    this.required('#placard-num').textContent = `Room ${room.numeral}`;
+    this.required('#placard-title').textContent = room.title;
+    this.required('#placard-medium').textContent = room.medium;
+    this.required('#placard-note').textContent = room.note;
+    const track = this.engine.track;
+    this.required('#placard-track').textContent = track ? `Listening to ${track.title}` : 'Gallery preview with silent, imaginary music';
+    this.placard.classList.add('is-visible');
+    this.placard.setAttribute('aria-hidden', 'false');
+    if (this.placardTimer !== null) {
+      window.clearTimeout(this.placardTimer);
+    }
+    this.placardTimer = window.setTimeout(() => this.hidePlacard(), PLACARD_SECONDS * 1000);
+  }
+
+  private hidePlacard(): void {
+    if (this.placardTimer !== null) {
+      window.clearTimeout(this.placardTimer);
+      this.placardTimer = null;
+    }
+    this.placard.classList.remove('is-visible');
+    this.placard.setAttribute('aria-hidden', 'true');
   }
 
   private toggleDrawer(): void {
@@ -366,10 +449,6 @@ export class Controls {
 
   private showSeekHint(): void {
     this.showHint(SEEK_HINT_TEXT, 3000);
-  }
-
-  private showModeHint(mode: VisualMode): void {
-    this.showHint({ membrane: 'Membrane', rupture: 'Rupture', splat: 'Splat' }[mode], 1500);
   }
 
   private showHint(message: string, duration: number): void {
@@ -412,10 +491,15 @@ export class Controls {
       } else if (event.key.toLowerCase() === 'f') {
         event.preventDefault();
         this.callbacks.onFullscreen();
-      } else if (event.key.toLowerCase() === 'm' && !event.shiftKey) {
+      } else if (event.key.toLowerCase() === 'm') {
         event.preventDefault();
-        const order: VisualMode[] = ['membrane', 'rupture', 'splat'];
-        this.setMode(order[(order.indexOf(this.settings.mode) + 1) % order.length]);
+        const step = event.shiftKey ? ROOM_ORDER.length - 1 : 1;
+        this.setMode(ROOM_ORDER[(ROOM_ORDER.indexOf(this.settings.mode) + step) % ROOM_ORDER.length]!);
+      } else if (/^[1-9]$/.test(event.key) && Number(event.key) <= ROOM_ORDER.length) {
+        event.preventDefault();
+        this.setMode(ROOM_ORDER[Number(event.key) - 1]!);
+      } else if (event.key === 'Escape' && document.body.classList.contains('welcome-open') && this.engine.track) {
+        this.setWelcomeVisible(false);
       } else if (event.key === 'Home') {
         event.preventDefault();
         this.callbacks.onRestart();

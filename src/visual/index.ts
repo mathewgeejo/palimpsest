@@ -1,14 +1,22 @@
 import p5 from 'p5';
-import type { AudioFeatures, FeatureSource, Quality, VisualSettings } from '../types';
+import type { AudioFeatures, FeatureSource, Quality, VisualMode, VisualSettings } from '../types';
 import { createEmptyFeatures } from '../types';
 import { Membrane, MAX_ROWS, MIN_VISIBLE_ROWS, ROW_RATE } from './membrane';
 import { Rupture } from './rupture';
 import { Splats } from './splats';
+import { Suminagashi } from './suminagashi';
+import { Morphogen } from './morphogen';
+import { Phosphor } from './phosphor';
+import { Chladni } from './chladni';
+import { IdleMusic } from './idle';
+import type { Room } from './common';
 import { membraneFrag, membraneVert, postFrag, postVert } from './shaders';
 
 export interface Visualiser {
   /** Clear all history and start a new sculpture with this seed (restart / seek / track change). */
   reset(seed: number): void;
+  /** Gallery preview: drive every room with silent synthetic music until a track is loaded. */
+  setIdle(idle: boolean): void;
   setSettings(settings: Partial<VisualSettings>): void;
   /** Capture the current rendered frame as a PNG blob. */
   exportPNG(): Promise<Blob>;
@@ -67,8 +75,11 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
 
   return new Promise<Visualiser>((resolve, reject) => {
     let membrane: Membrane;
-    let rupture: Rupture | null = null;
     let splats: Splats | null = null;
+    let rooms: Partial<Record<VisualMode, Room>> = {};
+    const eachRoom = (fn: (room: Room) => void) => Object.values(rooms).forEach((room) => room && fn(room));
+    let idle = false;
+    const idleMusic = new IdleMusic();
     let memShader: p5.Shader;
     let postShader: p5.Shader;
     let scene: p5.Framebuffer;
@@ -126,7 +137,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         // An explicit density opts the buffer out of p5's auto-sizing, so resizes are handled below.
         scene.pixelDensity(density * q.sceneScale);
         stats.quality = settings.quality;
-        rupture?.configure(settings.quality, density);
+        eachRoom((room) => room.configure(settings.quality, density));
         splats?.setQuality(settings.quality);
         membrane?.invalidate();
       };
@@ -149,8 +160,14 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         try {
           memShader = p.createShader(membraneVert, membraneFrag);
           postShader = p.createShader(postVert, postFrag);
-          rupture = new Rupture(p);
           splats = new Splats(p);
+          rooms = {
+            rupture: new Rupture(p),
+            suminagashi: new Suminagashi(p),
+            morphogen: new Morphogen(p),
+            phosphor: new Phosphor(p),
+            chladni: new Chladni(p),
+          };
         } catch (e) {
           fail('The visualiser shaders failed to compile on this device.', e);
           p.noLoop();
@@ -165,7 +182,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         canvas.setAttribute('aria-label', 'PALIMPSEST sculpture');
         canvas.setAttribute('role', 'img');
         membrane = new Membrane(p, seed);
-        rupture?.reset(seed);
+        eachRoom((room) => room.reset(seed));
         splats?.reset(seed);
         configureQuality();
         lastWall = performance.now();
@@ -177,7 +194,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         if (w !== p.width || h !== p.height) {
           p.resizeCanvas(w, h);
           scene?.resize(w, h);
-          rupture?.resize(w, h);
+          eachRoom((room) => room.resize(w, h));
         }
       };
 
@@ -214,9 +231,18 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
 
       const frame = (p: p5, dt: number) => {
         // --- audio → history (driven by playback time, not frame count) ---
-        source.analyse(features, dt);
-        const playing = source.playing;
-        const t = source.currentTime;
+        let playing: boolean, t: number, wave: Float32Array;
+        if (idle) {
+          idleMusic.step(features, dt);
+          playing = true;
+          t = idleMusic.t;
+          wave = idleMusic.wave;
+        } else {
+          source.analyse(features, dt);
+          playing = source.playing;
+          t = source.currentTime;
+          wave = source.waveform;
+        }
         if (playing) {
           if (lastAudioT < 0 || t < lastAudioT || t - lastAudioT > MAX_FRAME_GAP) {
             // Start, seek-without-reset or a resumed background tab: continue from here
@@ -254,12 +280,13 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         }
         membrane.update(buildParams(), QUALITY[settings.quality].rebuildBudget);
 
-        if (settings.mode === 'rupture' && rupture) {
-          rupture.frame(features, dt, playing, settings, QUALITY[settings.quality].glowTaps);
+        const room = rooms[settings.mode];
+        if (room) {
+          room.frame(features, dt, playing, settings, QUALITY[settings.quality].glowTaps, wave);
           stats.rows = membrane.total;
           stats.chunks = membrane.chunkCount;
           stats.canvas = [p.width * p.pixelDensity(), p.height * p.pixelDensity()];
-          stats.scene = rupture.bufferSize;
+          stats.scene = room.bufferSize;
           snapView = true;
           return;
         }
@@ -303,7 +330,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         p.perspective(FOV, w / h, camZ * 0.1, camZ * 10);
         p.camera(0, 0, camZ, 0, 0, 0, 0, 1, 0);
         if (settings.mode === 'splat' && splats) {
-          splats.draw(settings, dt, w, h, lastRowT + headFrac / ROW_RATE, playing);
+          splats.draw(settings, dt, w, h, lastRowT + headFrac / ROW_RATE, playing, features);
           stats.splats = splats.count;
         } else if (membrane.total > 1) {
           p.push();
@@ -374,7 +401,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
       reset(newSeed: number) {
         seed = newSeed >>> 0;
         membrane?.reset(seed);
-        rupture?.reset(seed);
+        eachRoom((room) => room.reset(seed));
         splats?.reset(seed);
         lastAudioT = -1;
         headFrac = 0;
@@ -382,6 +409,12 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         slowRms = 0;
         liveBass = 0;
         snapView = true;
+      },
+      setIdle(next: boolean) {
+        if (next === idle) return;
+        idle = next;
+        idleMusic.reset();
+        api.reset(seed);
       },
       setSettings(next: Partial<VisualSettings>) {
         const prev = { ...settings };
@@ -401,7 +434,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
       destroy() {
         resizeObserver.disconnect();
         membrane?.reset(0);
-        rupture?.destroy();
+        eachRoom((room) => room.destroy());
         splats?.destroy();
         instance.remove();
       },

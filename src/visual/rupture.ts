@@ -1,6 +1,7 @@
 import p5 from 'p5';
 import type { AudioFeatures, Quality, VisualSettings } from '../types';
 import { postVert } from './shaders';
+import type { Room } from './common';
 
 /**
  * RUPTURE — the loud mode. A feedback painting: every frame is warped, torn and
@@ -175,7 +176,7 @@ function mulberry(seed: number) {
 const approach = (cur: number, target: number, dt: number, tau: number) =>
   cur + (target - cur) * (1 - Math.exp(-dt / Math.max(1e-4, tau)));
 
-export class Rupture {
+export class Rupture implements Room {
   private a: p5.Framebuffer | null = null;
   private b: p5.Framebuffer | null = null;
   private readonly feed: p5.Shader;

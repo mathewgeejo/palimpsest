@@ -67,7 +67,10 @@ const controls = new Controls(engine, {
   onSettingsChange: (settings) => visualiser?.setSettings(settings),
 });
 
-engine.on('trackchange', (track) => visualiser?.reset(track.seed));
+engine.on('trackchange', (track) => {
+  visualiser?.setIdle(false);
+  visualiser?.reset(track.seed);
+});
 const resetVisualiser = (): void => {
   const track = engine.track;
   if (track) {
@@ -96,6 +99,9 @@ void createVisualiser({
     visualiser = instance;
     if (engine.track) {
       visualiser.reset(engine.track.seed);
+    } else {
+      // Until something is played, every room runs on silent, imaginary music.
+      visualiser.setIdle(true);
     }
   })
   .catch((error: unknown) => {

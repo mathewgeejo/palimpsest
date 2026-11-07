@@ -94,19 +94,25 @@ select:focus-visible {
   opacity: 1;
 }
 
+body[data-mode="suminagashi"]:not(.welcome-open) .wordmark {
+  color: #2b2722;
+}
+
+/* --- Entrance: the live room behind, the title on the wall, the catalogue below --- */
+
 .welcome {
   position: fixed;
   z-index: 4;
   inset: 0;
   display: grid;
-  place-items: center;
-  padding: 80px 24px;
+  grid-template-rows: auto 1fr auto;
+  padding: 0 clamp(20px, 4vw, 64px);
   background:
-    radial-gradient(ellipse at center, rgb(11 11 12 / 54%), rgb(11 11 12 / 30%) 48%, rgb(11 11 12 / 66%)),
-    rgb(11 11 12 / 14%);
+    linear-gradient(90deg, rgb(8 8 9 / 84%) 0%, rgb(8 8 9 / 58%) 34%, rgb(8 8 9 / 8%) 68%, transparent),
+    linear-gradient(0deg, rgb(8 8 9 / 92%) 0%, rgb(8 8 9 / 50%) 24%, transparent 42%);
   opacity: 1;
   visibility: visible;
-  transition: opacity 680ms cubic-bezier(0.22, 0.61, 0.36, 1), visibility 680ms;
+  transition: opacity 900ms cubic-bezier(0.22, 0.61, 0.36, 1), visibility 900ms;
 }
 
 .welcome.is-hidden {
@@ -115,45 +121,258 @@ select:focus-visible {
   pointer-events: none;
 }
 
+.welcome-meta {
+  display: flex;
+  justify-content: flex-end;
+  gap: 28px;
+  padding-top: 36px;
+  color: rgb(236 230 218 / 52%);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
 .welcome-content {
-  width: min(100%, 590px);
-  text-align: center;
-  transform: translateY(-1.5vh);
+  align-self: center;
+  width: min(100%, 600px);
+  margin-left: clamp(0px, 3vw, 48px);
+  text-align: left;
+  animation: rise 1100ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
 }
 
 .eyebrow {
-  margin: 0 0 25px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 26px;
   color: var(--muted);
   font-size: 10px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
 }
 
+.eyebrow-rule {
+  display: inline-block;
+  width: 34px;
+  height: 1px;
+  background: var(--copper);
+}
+
+#welcome-now {
+  color: var(--ivory);
+}
+
 .welcome h1 {
   margin: 0;
   color: var(--ivory);
   font-family: var(--title-font);
-  font-size: clamp(38px, 7vw, 68px);
+  font-size: clamp(40px, 7.2vw, 86px);
   font-weight: 400;
-  letter-spacing: 0.2em;
-  line-height: 1.12;
-  text-indent: 0.2em;
+  letter-spacing: 0.18em;
+  line-height: 1.04;
+  margin-left: -0.04em;
 }
 
 .welcome-line {
-  margin: 21px 0 35px;
+  max-width: 30em;
+  margin: 22px 0 36px;
   color: #d2c9bb;
   font-family: var(--title-font);
-  font-size: clamp(17px, 2.4vw, 21px);
+  font-size: clamp(17px, 2.1vw, 21px);
   font-style: italic;
   font-weight: 400;
+  line-height: 1.45;
 }
 
 .welcome-actions {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.button-note {
+  margin-left: 8px;
+  opacity: 0.62;
+  font-variant-numeric: tabular-nums;
+}
+
+kbd {
+  padding: 0 4px;
+  border: 1px solid rgb(236 230 218 / 20%);
+  border-radius: 2px;
+  color: #c9c2b6;
+  font-family: inherit;
+  font-size: 10px;
+}
+
+.catalogue {
+  padding: 0 0 26px;
+  animation: rise 1300ms 150ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.catalogue-caption {
+  max-width: 860px;
+  min-height: 3.1em;
+  margin: 0 0 16px;
+  color: #cfc7ba;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.catalogue-caption em {
+  color: var(--ivory);
+  font-family: var(--title-font);
+  font-size: 15px;
+}
+
+.caption-num {
+  margin-right: 6px;
+  color: var(--copper);
+  font-family: var(--title-font);
+  letter-spacing: 0.08em;
+}
+
+.catalogue-list {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--hairline);
+  list-style: none;
+}
+
+.room-card {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-height: 96px;
+  align-content: start;
+  gap: 5px;
+  padding: 14px 14px 12px;
+  border: 0;
+  border-left: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--ivory);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 transparent;
+  transition: background 220ms ease, box-shadow 220ms ease;
+}
+
+.catalogue-list li:first-child .room-card {
+  border-left: 0;
+}
+
+.room-card:hover {
+  background: rgb(236 230 218 / 4%);
+}
+
+.room-card[aria-pressed="true"] {
+  background: rgb(236 230 218 / 6%);
+  box-shadow: inset 0 2px 0 var(--copper);
+}
+
+.room-num {
+  color: var(--copper);
+  font-family: var(--title-font);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+}
+
+.room-title {
+  font-family: var(--title-font);
+  font-size: 16px;
+}
+
+.room-medium {
+  color: #8f897f;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.room-card[aria-pressed="true"] .room-medium {
+  color: #b4ada2;
+}
+
+/* --- Wall label shown on entering a room --- */
+
+.placard {
+  position: fixed;
+  z-index: 5;
+  bottom: 104px;
+  left: 28px;
+  width: min(330px, calc(100vw - 56px));
+  padding: 16px 18px 15px;
+  border: 1px solid var(--hairline);
+  background: rgb(12 12 13 / 76%);
+  color: var(--ivory);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(6px);
+  transition: opacity 700ms ease, transform 700ms ease, visibility 700ms;
+  pointer-events: none;
+  backdrop-filter: blur(10px);
+}
+
+.placard.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.placard-num {
+  margin: 0 0 6px;
+  color: var(--copper);
+  font-family: var(--title-font);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+}
+
+.placard-title {
+  margin: 0;
+  font-family: var(--title-font);
+  font-size: 24px;
+  font-weight: 400;
+}
+
+.placard-medium {
+  margin: 6px 0 11px;
+  color: var(--muted);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.placard-note {
+  margin: 0;
+  color: #cfc8bd;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.placard-track {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+  color: #9a948a;
+  font-family: var(--title-font);
+  font-size: 12px;
+  font-style: italic;
+}
+
+body.welcome-open .control-bar,
+body.welcome-open .settings-drawer {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .button {
@@ -348,9 +567,48 @@ select:focus-visible {
   background: var(--copper);
 }
 
+.track-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 2px;
+}
+
+.room-switcher {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 1px;
+}
+
+.room-pip {
+  min-width: 28px;
+  height: 22px;
+  padding: 0 5px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: #8a847a;
+  font-family: var(--title-font);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+
+.room-pip:hover {
+  color: var(--ivory);
+}
+
+.room-pip[aria-pressed="true"] {
+  border-bottom-color: var(--copper);
+  color: var(--copper);
+}
+
 .track-title {
+  min-width: 0;
   max-width: 100%;
-  margin-top: 3px;
   overflow: hidden;
   color: #a9a399;
   font-size: 10px;
@@ -643,6 +901,29 @@ select:focus-visible {
     bottom: 84px;
   }
 
+  .welcome-meta,
+  .room-switcher {
+    display: none;
+  }
+
+  .welcome-content {
+    margin-left: 0;
+    padding-top: 64px;
+  }
+
+  .catalogue-list {
+    grid-template-columns: none;
+    grid-auto-columns: 148px;
+    grid-auto-flow: column;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .placard {
+    bottom: 88px;
+    left: 12px;
+  }
+
   .seek-hint {
     right: 12px;
     bottom: 82px;
@@ -674,6 +955,26 @@ select:focus-visible {
 
   .welcome-hint {
     line-height: 1.7;
+  }
+}
+
+@media (max-height: 680px) {
+  .catalogue-caption,
+  .room-medium,
+  .welcome-hint {
+    display: none;
+  }
+
+  .room-card {
+    min-height: 0;
+  }
+
+  .welcome-line {
+    margin: 14px 0 22px;
+  }
+
+  .placard-note {
+    display: none;
   }
 }
 
