@@ -22,6 +22,7 @@ import { postVert } from './shaders';
 const MAX_OPS = 96;
 const LIVE: Record<Quality, number> = { low: 40, medium: 72, high: 88 };
 const SCALE: Record<Quality, number> = { low: 0.6, medium: 0.85, high: 1 };
+const SAMPLES: Record<Quality, number> = { low: 1, medium: 2, high: 4 };
 
 const OP_DROP = 0, OP_TINE = 1, OP_VORTEX = 2, OP_WAVE = 3;
 
@@ -109,28 +110,38 @@ const showFrag = /* glsl */ `#version 300 es
 precision highp float;
 in vec2 vUv;
 uniform sampler2D uPrev;
-uniform float uAspect, uTime, uRipple, uSeed, uGrain;
+uniform float uAspect, uTime, uRipple, uSeed, uGrain, uPx;
+uniform int uSamples;
 uniform vec3 uPaper;
 out vec4 fragColor;
 ${GLSL_LIB}
 ${WALK}
-void main() {
-  vec2 p0 = (vUv - 0.5) * vec2(uAspect, 1.0);
+vec3 sampleAt(vec2 p0) {
   // The water is never still: a faint live ripple that is not recorded.
   vec2 p = p0 + uRipple * vec2(sin(p0.y * 21.0 + uTime * 1.9) + sin(p0.x * 7.0 - uTime * 0.7),
                                cos(p0.x * 17.0 - uTime * 1.6) + cos(p0.y * 9.0 + uTime * 0.8));
   vec3 ink; float edge, rim;
+  if (walk(p, ink, edge, rim)) return shade(ink, edge, rim, p);
+  vec2 uv = p / vec2(uAspect, 1.0) + 0.5;
+  return (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) ? uPaper : texture(uPrev, uv).rgb;
+}
+void main() {
+  vec2 p0 = (vUv - 0.5) * vec2(uAspect, 1.0);
+  // Rotated-grid supersampling keeps every ring edge clean however far it was pushed.
   vec3 col;
-  if (walk(p, ink, edge, rim)) {
-    col = shade(ink, edge, rim, p);
+  if (uSamples >= 4) {
+    col = 0.25 * (sampleAt(p0 + vec2(0.125, 0.375) * uPx) + sampleAt(p0 + vec2(-0.375, 0.125) * uPx)
+                + sampleAt(p0 + vec2(0.375, -0.125) * uPx) + sampleAt(p0 + vec2(-0.125, -0.375) * uPx));
+  } else if (uSamples >= 2) {
+    col = 0.5 * (sampleAt(p0 + vec2(0.25, 0.25) * uPx) + sampleAt(p0 - vec2(0.25, 0.25) * uPx));
   } else {
-    vec2 uv = p / vec2(uAspect, 1.0) + 0.5;
-    col = (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) ? uPaper : texture(uPrev, uv).rgb;
+    col = sampleAt(p0);
   }
-  // Washi: long fibres and soft cloudy formation, fixed to the sheet.
-  float fib = noise(vec2(p0.x * 9.0, p0.y * 90.0)) * noise(vec2(p0.x * 60.0 + 3.0, p0.y * 14.0));
-  float cloud = fbm(p0 * 6.0);
-  col *= 0.955 + 0.06 * cloud + 0.05 * fib;
+  // Washi: soft cloudy formation and a few long fibres, fixed to the sheet.
+  float cloud = fbm(p0 * 5.0 + 11.0);
+  vec2 fp = rot(0.35) * p0;
+  float fib = smoothstep(0.82, 1.0, noise(vec2(fp.x * 4.0, fp.y * 140.0))) * noise(fp * 9.0);
+  col *= 0.965 + 0.05 * cloud - 0.035 * fib;
   vec2 q = vUv - 0.5;
   col *= 1.0 - 0.32 * dot(q, q);
   col += (hash(gl_FragCoord.xy + uSeed) - 0.5) * uGrain;
@@ -218,6 +229,8 @@ export class Suminagashi implements Room {
       sh.setUniform('uRipple', s.reducedMotion ? this.ripple * 0.3 : this.ripple);
       sh.setUniform('uSeed', s.reducedMotion ? 0 : (p.frameCount % 61) * 7.31);
       sh.setUniform('uGrain', 0.022);
+      sh.setUniform('uSamples', SAMPLES[this.quality]);
+      sh.setUniform('uPx', 1 / (p.height * p.pixelDensity()));
     });
   }
 
@@ -245,7 +258,7 @@ export class Suminagashi implements Room {
         this.dropAcc = 0;
         const rad = 0.008 + 0.034 * f.rms + 0.01 * f.bass;
         if (this.inkTurn) {
-          const accent = f.highMid > 0.55 && r() < 0.3;
+          const accent = f.highMid > 0.6 && r() < 0.16;
           const ink = accent ? this.accents[r() < 0.5 ? 0 : 1]! : mix(SUMI, INDIGO, f.centroid);
           this.drop(bx, by, rad, ink, 1);
         } else {
@@ -257,7 +270,8 @@ export class Suminagashi implements Room {
       if (hit) {
         // A large accent drop followed by water inside it: a bright ring.
         const R = 0.03 + 0.07 * hit * (0.6 + 0.6 * f.bass);
-        this.drop(bx, by, R, this.accents[r() < 0.6 ? 0 : 1]!, 1);
+        const roll = r();
+        this.drop(bx, by, R, roll < 0.3 ? this.accents[0]! : roll < 0.45 ? this.accents[1]! : mix(SUMI, INDIGO, f.centroid), 1);
         this.drop(bx, by, R * 0.72, PAPER, 0);
         this.inkTurn = true;
       }

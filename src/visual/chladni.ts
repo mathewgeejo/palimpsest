@@ -25,7 +25,7 @@ const stepFrag = /* glsl */ `#version 300 es
 precision highp float;
 in vec2 vUv;
 uniform sampler2D uPrev;
-uniform float uAspect, uTime, uInit, uWidth, uSprinkle;
+uniform float uAspect, uTime, uInit, uWidth, uSprinkle, uStep;
 uniform vec3 uN, uM, uSign, uAmp;
 out vec4 fragColor;
 ${GLSL_LIB}
@@ -39,7 +39,7 @@ void main() {
   bool on = x.x >= 0.0 && x.y >= 0.0 && x.x <= 1.0 && x.y <= 1.0;
   if (!on) { fragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
   if (uInit > 0.5) {
-    fragColor = vec4(vec3(0.22) + 0.25 * vec3(hash(vUv * 311.0), hash(vUv * 173.0 + 4.0), hash(vUv * 97.0 + 9.0)), 1.0);
+    fragColor = vec4(vec3(0.05) + 0.12 * vec3(hash(vUv * 311.0), hash(vUv * 173.0 + 4.0), hash(vUv * 97.0 + 9.0)), 1.0);
     return;
   }
   vec3 outv;
@@ -51,18 +51,20 @@ void main() {
                   field(x + vec2(0.0, e), n, m, s) - field(x - vec2(0.0, e), n, m, s)) / (2.0 * e);
     float gl = max(length(g), 1e-3);
     // Downhill on |f|: toward the nearest nodal line.
-    vec2 vel = -sign(f) * g / (PI * (n + m)) * amp * 0.0016;
+    // uStep is this sub-step's share of a 60 Hz frame, so settling is frame-rate independent.
+    vec2 vel = -sign(f) * g / (PI * (n + m)) * amp * 0.0045 * uStep;
     // Bouncing: grains on antinodes are thrown about, grains on nodes rest.
     float fb = float(b) * 7.13;
-    vec2 jit = (vec2(hash(vUv * 913.0 + uTime + fb), hash(vUv * 577.0 - uTime + fb)) - 0.5) * abs(f) * amp * 0.005;
+    vec2 jit = (vec2(hash(vUv * 913.0 + uTime + fb), hash(vUv * 577.0 - uTime + fb)) - 0.5) * abs(f) * amp * 0.006 * sqrt(uStep);
     vec2 back = x - vel + jit;
     vec2 suv = ((back - 0.5) * 2.0 * ${PLATE}) / vec2(uAspect, 1.0) + 0.5;
     float d = texture(uPrev, suv)[b];
-    // Settle toward the figure: sand gathers within a grain's width of the node.
+    // Settle toward the figure: sand gathers within a grain's width of the node
+    // and is shaken off everywhere the plate moves.
     float dist = abs(f) / gl;
-    float target = 1.6 * exp(-pow(dist / uWidth, 2.0));
-    d += (target - d) * amp * 0.0045;
-    d += uSprinkle * (0.5 + hash(vUv * 41.0 + uTime + fb));
+    float target = 1.7 * exp(-pow(dist / uWidth, 2.0));
+    d += (target - d) * min(1.0, amp * 0.032 * uStep * (target > d ? 1.0 : 0.6));
+    d += uSprinkle * uStep * (0.5 + hash(vUv * 41.0 + uTime + fb));
     outv[b] = clamp(d, 0.0, 2.0);
   }
   fragColor = vec4(outv, 1.0);
@@ -104,11 +106,11 @@ void main() {
     vec3 cols[3] = vec3[3](uC0, uC1, uC2);
     col = plate;
     for (int b = 0; b < 3; b++) {
-      float h = hash(cell + float(b) * 17.31);
-      float grain = step(h, d[b] * 0.62);
-      float packed = smoothstep(0.7, 1.5, d[b]) * 0.75;
+      float h = hashCell(cell + float(b) * 1931.0);
+      float grain = step(h, d[b] * 0.55);
+      float packed = smoothstep(0.9, 1.6, d[b]) * 0.7;
       float sand = max(grain, packed);
-      float tone = 0.75 + 0.4 * hash(cell * 1.7 + float(b));
+      float tone = 0.72 + 0.4 * hashCell(cell * 3.0 + float(b) * 711.0);
       col = mix(col, cols[b] * tone, sand);
     }
     // The clamp at the centre, where the bow drives the plate.
@@ -210,6 +212,7 @@ export class Chladni implements Room {
       if (s.camera === 'drift' && !s.reducedMotion) this.angle = Math.sin(this.t * 0.05) * 0.14;
 
       const steps = STEPS[this.quality];
+      const share = Math.min(6, dt * 60) / steps;
       for (let i = 0; i < steps; i++) {
         this.state.pass(this.step, (sh) => {
           sh.setUniform('uInit', 0);
@@ -220,7 +223,8 @@ export class Chladni implements Room {
           sh.setUniform('uSign', this.sign);
           sh.setUniform('uAmp', this.amp);
           sh.setUniform('uWidth', 0.0035 + 0.006 * (1 - s.detail));
-          sh.setUniform('uSprinkle', 0.00012 * (1 - s.memory * 0.7));
+          sh.setUniform('uSprinkle', 0.0004 * (1 - s.memory * 0.7));
+          sh.setUniform('uStep', share);
         });
       }
     }

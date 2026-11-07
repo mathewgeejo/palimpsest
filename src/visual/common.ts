@@ -100,7 +100,10 @@ export class PingPong {
   }
 
   private make() {
-    const opts = { depth: false, antialias: false, density: this.density * this.scale[this.quality], textureFiltering: this.p.LINEAR };
+    const opts = {
+      depth: false, antialias: false, channels: this.p.RGBA,
+      density: this.density * this.scale[this.quality], textureFiltering: this.p.LINEAR,
+    };
     let fb: p5.Framebuffer;
     try {
       fb = this.p.createFramebuffer({ ...opts, format: this.p.HALF_FLOAT });
@@ -140,10 +143,16 @@ export class PingPong {
 /** Shared GLSL: hash, value noise, rotation. */
 export const GLSL_LIB = /* glsl */ `
 float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+// Integer-lattice hash without visible structure (for per-cell grains).
+float hashCell(vec2 c) {
+  vec3 p = fract(vec3(c.xyx) * vec3(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yzx + 33.33);
+  return fract((p.x + p.y) * p.z);
+}
 float noise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
   f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+  return mix(mix(hashCell(i), hashCell(i + vec2(1, 0)), f.x), mix(hashCell(i + vec2(0, 1)), hashCell(i + vec2(1, 1)), f.x), f.y);
 }
 float fbm(vec2 p) {
   float s = 0.0, a = 0.5;

@@ -229,7 +229,8 @@ export class Phosphor implements Room {
       // When the figure collapses (fading to silence) every segment piles onto
       // one spot; dim with the figure's size so it rests as a faint dot.
       const size2 = Math.min(1, (this.gain * rms) / 0.34) ** 2;
-      const beamGain = 0.45 * this.density * Math.max(size2, 0.004);
+      // Light deposited is proportional to the beam time each frame covers.
+      const beamGain = 0.8 * this.density * Math.max(size2, 0.004) * Math.min(4, k);
 
       this.screen.pass(this.decay, (sh) => sh.setUniform('uDecay', decay), () => {
         p.push();

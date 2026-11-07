@@ -15,7 +15,7 @@ import { postVert } from './shaders';
  * is lit as wet enamel, and the growing front glows with the timbre's colour.
  */
 
-const SCALE: Record<Quality, number> = { low: 0.32, medium: 0.45, high: 0.55 };
+const SCALE: Record<Quality, number> = { low: 0.35, medium: 0.5, high: 0.6 };
 const ITER: Record<Quality, number> = { low: 6, medium: 10, high: 14 };
 
 /** (F, k) species along the centroid axis — values for Du = 1, Dv = 0.5, dt = 1. */
@@ -77,7 +77,7 @@ void main() {
   float h = hash(floor(vUv / uTexel / 3.0) + fract(uTime * 13.17) * 91.0);
   if (h > 1.0 - uNucleate) { v = max(v, 0.5); u = min(u, 0.5); }
 
-  float glow = max(c.b * uGlowDecay, clamp(abs(dv) * 160.0, 0.0, 1.0));
+  float glow = max(c.b * uGlowDecay, clamp(abs(dv) * 70.0, 0.0, 1.0));
   fragColor = vec4(clamp(u, 0.0, 1.0), clamp(v, 0.0, 1.0), glow, 1.0);
 }
 `;
@@ -110,7 +110,7 @@ void main() {
   col += vec3(0.85, 0.38, 0.22) * tissue * (1.0 - smoothstep(0.18, 0.36, v)) * 0.18;
   // The living front glows in the colour of the timbre.
   float g = c.b;
-  col += uHue * g * 0.9 + mix(uHue, vec3(1.0), 0.5) * g * g * 0.5;
+  col += uHue * g * 0.55 + mix(uHue, vec3(1.0), 0.5) * g * g * 0.35;
 
   vec2 q = vUv - 0.5;
   col *= 1.0 - 0.55 * dot(q, q);
@@ -203,7 +203,7 @@ export class Morphogen implements Room {
         this.hue[j] = approach(this.hue[j]!, target, dt, 0.8);
       }
 
-      const hit = this.onset.step(f, dt, s.reducedMotion ? 1.2 : 0.35);
+      const hit = this.onset.step(f, dt, s.reducedMotion ? 2 : 0.9);
       if (hit) {
         const r = this.rng;
         this.wound = [(r() - 0.5) * aspect * 0.85, (r() - 0.5) * 0.85, (0.03 + 0.1 * hit) * (s.reducedMotion ? 0.6 : 1), 1];
