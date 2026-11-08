@@ -1,12 +1,15 @@
 import './styles.css';
 import { AudioEngine } from './audio/engine';
 import { Controls } from './ui/controls';
+import { SongPicker } from './ui/song-picker';
+import { YouTubePlayer } from './audio/youtube';
 import { createVisualiser, type Visualiser } from './visual';
 
 const engine = new AudioEngine();
 let visualiser: Visualiser | null = null;
 
 function reportError(error: unknown): void {
+  if (error instanceof DOMException && error.name === 'AbortError') return;
   controls.showToast(error instanceof Error ? error.message : 'Something went wrong while loading audio.');
 }
 
@@ -27,6 +30,7 @@ const controls = new Controls(engine, {
   onChooseFile: () => {
     document.querySelector<HTMLInputElement>('#audio-file')?.click();
   },
+  onSearch: (query) => songPicker.open(query),
   onFile: (file) => {
     void engine.loadFile(file)
       .then(() => engine.play())
@@ -67,8 +71,15 @@ const controls = new Controls(engine, {
   onSettingsChange: (settings) => visualiser?.setSettings(settings),
 });
 
+const app = document.querySelector<HTMLElement>('#app')!;
+const youtubePlayer = new YouTubePlayer(app, () => songPicker.open());
+const songPicker = new SongPicker(app, async (song) => {
+  await engine.loadYouTube(song, youtubePlayer);
+  controls.setWelcomeVisible(false);
+});
+
 engine.on('trackchange', (track) => {
-  visualiser?.setIdle(false);
+  visualiser?.setIdle(track.source === 'youtube');
   visualiser?.reset(track.seed);
 });
 const resetVisualiser = (): void => {
@@ -98,6 +109,7 @@ void createVisualiser({
   .then((instance) => {
     visualiser = instance;
     if (engine.track) {
+      visualiser.setIdle(engine.track.source === 'youtube');
       visualiser.reset(engine.track.seed);
     } else {
       // Until something is played, every room runs on silent, imaginary music.

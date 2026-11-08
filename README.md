@@ -4,7 +4,7 @@
 
 A browser-only generative music visualiser. Play a track and a translucent membrane grows in the dark: the present is a bright, flexing lip; everything already heard remains as dimmer folded strata behind it. When the music ends, the finished sculpture stays on screen for viewing and PNG export.
 
-Built with Vite, strict TypeScript, p5.js 2 (instance mode, WEBGL, custom GLSL), and the Web Audio API. No backend, no accounts, no external services — uploaded audio never leaves the device.
+Built with Vite, strict TypeScript, p5.js 2 (instance mode, WEBGL, custom GLSL), and the Web Audio API. No backend or account required. Uploaded audio never leaves the device; optional song search and embedded playback connect directly to YouTube.
 
 ![Demo at 0:32, full memory](docs/screenshots/demo-32s-memory-1.jpg)
 
@@ -22,7 +22,19 @@ npm run typecheck
 
 Open the page, then **Try with sound** (a procedurally generated 70 s study) or **Choose audio** / drag a file anywhere onto the page.
 
-Keyboard: `Space` play/pause · `F` fullscreen · `Home` restart · `M` cycle visual mode · `←`/`→` seek 5 s (`Shift` = 15 s).
+Keyboard: `/` search songs · `Space` play/pause · `F` fullscreen · `Home` restart · `M` cycle visual mode · `←`/`→` seek 5 s (`Shift` = 15 s).
+
+## Find and play a song
+
+Start typing in the entrance’s search field, use the search button in the playback bar, or press `/` to open the song picker. Choose a result to play it through the visible YouTube player. The existing play/pause, seek, restart, and volume controls also control YouTube playback. Inside the picker, use Down/Up to move through results, Enter to select, and Escape to close.
+
+**Track links work immediately:** paste an individual YouTube or YouTube Music link into the picker and choose the result. A search API key is not needed for links.
+
+**Searching by song name needs a YouTube Data API v3 key.** Enable the API in a [Google Cloud project](https://console.cloud.google.com/apis/library/youtube.googleapis.com), create a browser API key, and restrict it to the YouTube Data API and your website’s HTTP referrers (including your localhost address during development). Add the key under **YouTube search settings** in the picker; it is kept in session storage for that tab. **Forget saved key** removes it. Alternatively, copy `.env.example` to `.env.local`, set `VITE_YOUTUBE_API_KEY`, and restart the dev server. Vite browser keys are visible to visitors, so keep their API and website restrictions enabled. See [Google’s setup guide](https://developers.google.com/youtube/v3/getting-started).
+
+Search is debounced and results are cached in memory to reduce quota use. Quota, connection, and playback errors appear in the interface. Individual videos may disallow embedding or have region/account restrictions; the player includes an **Open on YouTube** link.
+
+This is YouTube embedded playback, without YouTube Music account or private-library access. The cross-origin video player does not expose its audio samples to the Web Audio analyser. YouTube tracks therefore use the clearly labelled gallery animation, which is independent of the music. Use a local audio file or the study for audio-reactive visuals. The video player is kept visible, including its own playback controls and notices. See the [YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference).
 
 ## How sound becomes shape
 

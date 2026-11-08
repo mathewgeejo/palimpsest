@@ -6,6 +6,7 @@ export interface ControlCallbacks {
   onPlayToggle(): void;
   onTryDemo(): void;
   onChooseFile(): void;
+  onSearch(query?: string): void;
   onFile(file: File): void;
   onSeek(seconds: number): void;
   onRestart(): void;
@@ -16,6 +17,7 @@ export interface ControlCallbacks {
 }
 
 const icons = {
+  search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
   play: '<path d="m9 6 10 6-10 6z" fill="currentColor" stroke="none"/>',
   pause: '<path d="M8 6h3v12H8zM15 6h3v12h-3z" fill="currentColor" stroke="none"/>',
   replay: '<path d="M20 11a8 8 0 0 0-14.9-3M5 4v4h4M4 13a8 8 0 0 0 14.9 3M19 20v-4h-4"/>',
@@ -100,12 +102,18 @@ export class Controls {
         <div class="welcome-meta" aria-hidden="true">
           <span>An exhibition of listening</span>
           <span>${ROOMS.length} rooms</span>
-          <span>Sound never leaves this device</span>
+          <span>Local audio stays on this device</span>
         </div>
         <div class="welcome-content">
           <p class="eyebrow">Now showing <span class="eyebrow-rule" aria-hidden="true"></span> <span id="welcome-now"></span></p>
           <h1 id="welcome-title">PALIMPSEST</h1>
           <p class="welcome-line">Every sound leaves a mark. Every song builds a different world.</p>
+          <div class="welcome-song-search">
+            <label class="sr-only" for="song-quick-search">Search for a song</label>
+            <span aria-hidden="true">${svg(icons.search)}</span>
+            <input id="song-quick-search" type="search" placeholder="Find a song or paste a YouTube Music link…" autocomplete="off" />
+            <button type="button" id="find-song" aria-label="Open song search" title="Find a song">Search</button>
+          </div>
           <div class="welcome-actions">
             <button class="button button-primary" id="try-demo" type="button">Enter with the study <span class="button-note">70 s</span></button>
             <button class="button button-quiet" id="choose-audio" type="button">Bring your own sound</button>
@@ -194,6 +202,7 @@ export class Controls {
             </div>
           </div>
           <div class="utility-controls">
+            <button class="icon-button" id="search-songs" type="button" aria-label="Search songs" title="Search songs (/)">${svg(icons.search)}</button>
             <label class="volume-control" for="volume-range">
               <span class="sr-only">Volume</span>
               <span class="volume-icon" aria-hidden="true">${svg('<path d="M4 10v4h3l4 3V7l-4 3H4Z"/><path d="M15 9a4 4 0 0 1 0 6m2-8a7 7 0 0 1 0 10"/>')}</span>
@@ -223,6 +232,18 @@ export class Controls {
 
     this.required<HTMLButtonElement>('#try-demo').addEventListener('click', () => callbacks.onTryDemo());
     this.required<HTMLButtonElement>('#choose-audio').addEventListener('click', () => callbacks.onChooseFile());
+    this.required<HTMLButtonElement>('#find-song').addEventListener('click', () => callbacks.onSearch());
+    this.required<HTMLButtonElement>('#search-songs').addEventListener('click', () => callbacks.onSearch());
+    this.required<HTMLInputElement>('#song-quick-search').addEventListener('input', (event) => {
+      const input = event.currentTarget as HTMLInputElement;
+      if (input.value) {
+        callbacks.onSearch(input.value);
+        input.value = '';
+      }
+    });
+    this.required<HTMLInputElement>('#song-quick-search').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') { event.preventDefault(); callbacks.onSearch(); }
+    });
     this.required<HTMLButtonElement>('#return-room').addEventListener('click', () => this.setWelcomeVisible(false));
     this.required<HTMLButtonElement>('#wordmark').addEventListener('click', () => this.setWelcomeVisible(true));
     this.app.querySelectorAll<HTMLButtonElement>('button[data-mode]').forEach((button) => {
@@ -426,7 +447,9 @@ export class Controls {
     this.required('#placard-medium').textContent = room.medium;
     this.required('#placard-note').textContent = room.note;
     const track = this.engine.track;
-    this.required('#placard-track').textContent = track ? `Listening to ${track.title}` : 'Gallery preview with silent, imaginary music';
+    this.required('#placard-track').textContent = track
+      ? `${track.source === 'youtube' ? 'YouTube · gallery animation · ' : 'Listening to '}${track.title}`
+      : 'Gallery preview with silent, imaginary music';
     this.placard.classList.add('is-visible');
     this.placard.setAttribute('aria-hidden', 'false');
     if (this.placardTimer !== null) {
@@ -486,10 +509,13 @@ export class Controls {
         || target instanceof HTMLTextAreaElement
         || target instanceof HTMLSelectElement
         || (target instanceof HTMLElement && target.isContentEditable);
-      if (isInput || event.altKey || event.ctrlKey || event.metaKey) {
+      if (isInput || document.querySelector('dialog[open]') || event.altKey || event.ctrlKey || event.metaKey) {
         return;
       }
-      if (event.code === 'Space') {
+      if (event.key === '/') {
+        event.preventDefault();
+        this.callbacks.onSearch();
+      } else if (event.code === 'Space') {
         if (target instanceof HTMLElement && target.closest('button')) {
           return;
         }

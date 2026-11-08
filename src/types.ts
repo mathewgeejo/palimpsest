@@ -52,6 +52,7 @@ export interface VisualSettings {
 export interface TrackInfo {
   title: string;
   duration: number;
+  source?: 'local' | 'youtube';
   /** Stable 32-bit seed derived from the track. */
   seed: number;
 }
