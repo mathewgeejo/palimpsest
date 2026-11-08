@@ -2,22 +2,25 @@
 
 *Every sound leaves a scar. Every song builds a different world.*
 
-A browser-only generative music visualiser. Play a track and a translucent membrane grows in the dark: the present is a bright, flexing lip; everything already heard remains as dimmer folded strata behind it. When the music ends, the finished sculpture stays on screen for viewing and PNG export.
+A generative music visualiser. Play a track and a translucent membrane grows in the dark: the present is a bright, flexing lip; everything already heard remains as dimmer folded strata behind it. When the music ends, the finished sculpture stays on screen for viewing and PNG export.
 
-Built with Vite, strict TypeScript, p5.js 2 (instance mode, WEBGL, custom GLSL), and the Web Audio API. No backend or account required. Uploaded audio never leaves the device; optional song search and embedded playback connect directly to YouTube.
+Built with Vite, strict TypeScript, p5.js 2 (instance mode, WEBGL, custom GLSL), and the Web Audio API. Uploaded audio stays on the device. YouTube songs use an optional local audio service; no music video or mini player is loaded.
 
 ![Demo at 0:32, full memory](docs/screenshots/demo-32s-memory-1.jpg)
 
 ## Running
 
-Requires Node 20+.
+Requires Node 22+. YouTube audio also needs Python 3.10+.
 
 ```bash
 npm install
+npm run setup:audio # install the audio resolver locally into .tools/ (YouTube playback)
 npm run dev        # http://localhost:5173
 npm run build      # tsc --noEmit && vite build -> dist/
 npm run preview    # serve the production build
 npm run typecheck
+npm run test:audio
+npm start          # serve an existing dist/ with the audio service
 ```
 
 Open the page, then **Try with sound** (a procedurally generated 70 s study) or **Choose audio** / drag a file anywhere onto the page.
@@ -26,19 +29,21 @@ Keyboard: `/` search songs · `Space` play/pause · `F` fullscreen · `Home` res
 
 ## Find and play a song
 
-Start typing in the entrance’s search field, use the search button in the playback bar, or press `/` to open the song picker. Choose a result to play it through the visible YouTube player. The existing play/pause, seek, restart, and volume controls also control YouTube playback. Inside the picker, use Down/Up to move through results, Enter to select, and Escape to close.
+Start typing in the entrance’s search field, use the search button in the playback bar, or press `/` to open the song picker. Choose a result to play only its audio through the existing transport controls. Inside the picker, use Down/Up to move through results, Enter to select, and Escape to close.
 
-**Track links work immediately:** paste an individual YouTube or YouTube Music link into the picker and choose the result. A search API key is not needed for links.
+**Track links do not need a search API key:** paste an individual YouTube or YouTube Music link into the picker and choose the result. Run `npm run setup:audio` once before using YouTube playback. Local files and the study work without Python or this setup step.
 
 **Searching by song name needs a YouTube Data API v3 key.** Enable the API in a [Google Cloud project](https://console.cloud.google.com/apis/library/youtube.googleapis.com), create a browser API key, and restrict it to the YouTube Data API and your website’s HTTP referrers (including your localhost address during development). Add the key under **YouTube search settings** in the picker; it is kept in session storage for that tab. **Forget saved key** removes it. Alternatively, copy `.env.example` to `.env.local`, set `VITE_YOUTUBE_API_KEY`, and restart the dev server. Vite browser keys are visible to visitors, so keep their API and website restrictions enabled. See [Google’s setup guide](https://developers.google.com/youtube/v3/getting-started).
 
-Search is debounced and results are cached in memory to reduce quota use. Quota, connection, and playback errors appear in the interface. Individual videos may disallow embedding or have region/account restrictions; the player includes an **Open on YouTube** link.
+Search is debounced and results are cached in memory to reduce quota use. Quota, connection, and playback errors appear in the interface. Private, age-restricted, region-restricted, or otherwise unavailable tracks may fail; choose another result or use a local file.
 
-This is YouTube embedded playback, without YouTube Music account or private-library access. The cross-origin video player does not expose its audio samples to the Web Audio analyser. YouTube tracks therefore use the clearly labelled gallery animation, which is independent of the music. Use a local audio file or the study for audio-reactive visuals. The video player is kept visible, including its own playback controls and notices. See the [YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference).
+`server/music.mjs` uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) to resolve an audio-only stream, then proxies its bytes from `/api/music/audio/:id`. Video formats are excluded. Byte ranges preserve seeking and let the browser buffer ahead. Resolved stream URLs are cached briefly, shared between simultaneous requests, and refreshed if they expire; audio files are not saved to disk. The service is included in Vite dev/preview and `npm start`. Static hosting alone cannot provide this endpoint. Set `PALIMPSEST_PYTHON` if Python is not on PATH. Re-run `npm run setup:audio` to update the resolver when YouTube changes.
+
+Every source now goes through the same audio analyser. There is no generated gallery music: rooms stay still until audio plays, freeze on pause/end/buffering, and resume from media time. Suminagashi renders a shorter ink stack at a lower resolution before a cheap full-screen upscale. Low/Medium adapt their texture resolution on slow devices; High retains its requested detail.
 
 ## How sound becomes shape
 
-`src/audio/engine.ts` owns one `AudioContext`, one `<audio>` element, one `MediaElementAudioSourceNode → AnalyserNode (FFT 2048) → GainNode` chain. Uploaded files and the generated demo both go through it as blob URLs.
+`src/audio/engine.ts` owns one low-latency `AudioContext`, one `<audio>` element, one `MediaElementAudioSourceNode → AnalyserNode (FFT 2048) → GainNode` chain. Uploaded files and the generated demo use blob URLs; YouTube songs use the same-origin audio endpoint. All sources provide their actual samples to every visual mode.
 
 Each frame it derives, against the real sample rate and bin width:
 

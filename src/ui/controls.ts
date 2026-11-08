@@ -309,8 +309,9 @@ export class Controls {
   updatePlaybackState(): void {
     const ended = this.engine.ended;
     const playing = this.engine.playing;
-    const state = ended ? 'replay' : playing ? 'pause' : 'play';
-    const label = ended ? 'Replay' : playing ? 'Pause' : 'Play';
+    const canPause = !this.engine.paused && !ended;
+    const state = ended ? 'replay' : canPause ? 'pause' : 'play';
+    const label = ended ? 'Replay' : canPause ? 'Pause' : 'Play';
     if (state !== this.playbackState) {
       this.playbackState = state;
       this.playButton.innerHTML = svg(icons[state]);
@@ -447,9 +448,7 @@ export class Controls {
     this.required('#placard-medium').textContent = room.medium;
     this.required('#placard-note').textContent = room.note;
     const track = this.engine.track;
-    this.required('#placard-track').textContent = track
-      ? `${track.source === 'youtube' ? 'YouTube · gallery animation · ' : 'Listening to '}${track.title}`
-      : 'Gallery preview with silent, imaginary music';
+    this.required('#placard-track').textContent = track ? `Listening to ${track.title}` : 'Choose a song to bring the room to life';
     this.placard.classList.add('is-visible');
     this.placard.setAttribute('aria-hidden', 'false');
     if (this.placardTimer !== null) {

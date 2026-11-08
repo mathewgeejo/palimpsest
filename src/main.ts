@@ -2,7 +2,6 @@ import './styles.css';
 import { AudioEngine } from './audio/engine';
 import { Controls } from './ui/controls';
 import { SongPicker } from './ui/song-picker';
-import { YouTubePlayer } from './audio/youtube';
 import { createVisualiser, type Visualiser } from './visual';
 
 const engine = new AudioEngine();
@@ -72,14 +71,13 @@ const controls = new Controls(engine, {
 });
 
 const app = document.querySelector<HTMLElement>('#app')!;
-const youtubePlayer = new YouTubePlayer(app, () => songPicker.open());
 const songPicker = new SongPicker(app, async (song) => {
-  await engine.loadYouTube(song, youtubePlayer);
+  await engine.loadYouTube(song);
+  await engine.play();
   controls.setWelcomeVisible(false);
 });
 
 engine.on('trackchange', (track) => {
-  visualiser?.setIdle(track.source === 'youtube');
   visualiser?.reset(track.seed);
 });
 const resetVisualiser = (): void => {
@@ -109,11 +107,7 @@ void createVisualiser({
   .then((instance) => {
     visualiser = instance;
     if (engine.track) {
-      visualiser.setIdle(engine.track.source === 'youtube');
       visualiser.reset(engine.track.seed);
-    } else {
-      // Until something is played, every room runs on silent, imaginary music.
-      visualiser.setIdle(true);
     }
   })
   .catch((error: unknown) => {

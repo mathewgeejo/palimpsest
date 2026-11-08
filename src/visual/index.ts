@@ -8,15 +8,12 @@ import { Suminagashi } from './suminagashi';
 import { Morphogen } from './morphogen';
 import { Phosphor } from './phosphor';
 import { Chladni } from './chladni';
-import { IdleMusic } from './idle';
 import type { Room } from './common';
 import { membraneFrag, membraneVert, postFrag, postVert } from './shaders';
 
 export interface Visualiser {
   /** Clear all history and start a new sculpture with this seed (restart / seek / track change). */
   reset(seed: number): void;
-  /** Gallery preview: drive every room with silent synthetic music until a track is loaded. */
-  setIdle(idle: boolean): void;
   setSettings(settings: Partial<VisualSettings>): void;
   /** Capture the current rendered frame as a PNG blob. */
   exportPNG(): Promise<Blob>;
@@ -56,6 +53,11 @@ function approach(cur: number, target: number, dt: number, tau: number) {
 }
 
 export interface VisualStats {
+  renderedFrames: number;
+  audioTime: number;
+  rms: number;
+  bass: number;
+  treble: number;
   fps: number;
   visibleRows: number;
   splats: number;
@@ -78,8 +80,6 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
     let splats: Splats | null = null;
     let rooms: Partial<Record<VisualMode, Room>> = {};
     const eachRoom = (fn: (room: Room) => void) => Object.values(rooms).forEach((room) => room && fn(room));
-    let idle = false;
-    const idleMusic = new IdleMusic();
     let memShader: p5.Shader;
     let postShader: p5.Shader;
     let scene: p5.Framebuffer | null = null;
@@ -89,6 +89,8 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
     let seed = 1;
     let lastWall = 0;
     let lastAudioT = -1;
+    let lastMediaTime = -1;
+    let needsRedraw = true;
     let nextRowT = 0;
     let lastRowT = 0;
     let headFrac = 0;
@@ -104,6 +106,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
     let invalidateAt = 0;
     let exportResolvers: { resolve: (b: Blob) => void; reject: (e: Error) => void }[] = [];
     const stats: VisualStats = {
+      renderedFrames: 0, audioTime: 0, rms: 0, bass: 0, treble: 0,
       fps: 0, frameMs: 0, rows: 0, chunks: 0, vertices: 0, quality: settings.quality, canvas: [0, 0], scene: [0, 0],
       visibleRows: 0, splats: 0, frameRadius: 0,
     };
@@ -140,6 +143,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
       };
 
       const configureQuality = () => {
+        needsRedraw = true;
         const q = QUALITY[settings.quality];
         const density = Math.min(window.devicePixelRatio || 1, q.maxDensity);
         if (p.pixelDensity() !== density) p.pixelDensity(density);
@@ -201,6 +205,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
       p.windowResized = () => {
         const [w, h] = sizeOf();
         if (w !== p.width || h !== p.height) {
+          needsRedraw = true;
           p.resizeCanvas(w, h);
           scene?.resize(w, h);
           eachRoom((room) => room.resize(w, h));
@@ -211,13 +216,22 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         // noLoop() can leave one animation callback queued by p5.
         if (failed || document.hidden) return;
         const now = performance.now();
-        const dt = Math.min(0.1, Math.max(0.0005, (now - lastWall) / 1000));
+        const elapsed = Math.max(0.0005, (now - lastWall) / 1000);
+        const dt = Math.min(0.1, elapsed);
         lastWall = now;
-        stats.frameMs = stats.frameMs * 0.95 + dt * 1000 * 0.05;
+        stats.frameMs = stats.frameMs * 0.95 + elapsed * 1000 * 0.05;
         stats.fps = 1000 / stats.frameMs;
 
         try {
-          frame(p, dt);
+          // Holding the last canvas also freezes shader grain, camera drift and
+          // feedback simulations, and avoids expensive GPU work while paused.
+          if (source.playing || needsRedraw || invalidateAt > 0 || exportResolvers.length > 0) {
+            needsRedraw = false;
+            frame(p, dt);
+            if (settings.mode === 'membrane' && membrane.needsBuild) needsRedraw = true;
+          } else {
+            lastMediaTime = -1;
+          }
         } catch (e) {
           fail('The visualiser hit an unexpected error.', e);
           return;
@@ -232,7 +246,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
           }, 'image/png');
         }
 
-        tickAcc += dt;
+        tickAcc += elapsed;
         if (tickAcc >= 0.125) {
           tickAcc = 0;
           opts.onTick?.();
@@ -241,18 +255,20 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
 
       const frame = (p: p5, dt: number) => {
         // --- audio → history (driven by playback time, not frame count) ---
-        let playing: boolean, t: number, wave: Float32Array;
-        if (idle) {
-          idleMusic.step(features, dt);
-          playing = true;
-          t = idleMusic.t;
-          wave = idleMusic.wave;
-        } else {
-          source.analyse(features, dt);
-          playing = source.playing;
-          t = source.currentTime;
-          wave = source.waveform;
-        }
+        source.analyse(features, dt);
+        stats.renderedFrames += 1;
+        stats.audioTime = source.currentTime;
+        stats.rms = features.rms;
+        stats.bass = features.bass;
+        stats.treble = features.treble;
+        const t = source.currentTime;
+        const wave = source.waveform;
+        const advance = source.playing ? (lastMediaTime < 0 ? Math.min(dt, t) : Math.max(0, t - lastMediaTime)) : 0;
+        lastMediaTime = source.playing ? t : -1;
+        const playing = source.playing && advance > 0;
+        // Rooms follow the media clock, so buffering and pauses cannot advance
+        // their simulations, and frame stalls cannot make them drift off-song.
+        dt = playing ? Math.min(0.1, advance) : 0;
         if (playing) {
           if (lastAudioT < 0 || t < lastAudioT || t - lastAudioT > MAX_FRAME_GAP) {
             // Start, seek-without-reset or a resumed background tab: continue from here
@@ -276,12 +292,8 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
           quiet = approach(quiet, quietTarget, dt, quietTarget > quiet ? 1.8 : 0.9);
           liveBass = approach(liveBass, features.bass, dt, settings.reducedMotion ? 0.5 : 0.09);
         } else {
-          // Paused / ended: the sculpture holds still; live flex relaxes.
+          // Paused / ended / buffering: preserve the last shape exactly.
           lastAudioT = -1;
-          liveBass = approach(liveBass, 0, dt, 0.6);
-          if (source.currentTime > 0 && membrane.total > ROW_RATE * 4) {
-            quiet = approach(quiet, Math.max(quiet, 0.55), dt, 2.5);
-          }
         }
 
         if (invalidateAt && performance.now() >= invalidateAt) {
@@ -290,7 +302,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         }
         // Keep completed history ready for room switches, but only rebuild the
         // growing chunk on every audio row when the sculpture is actually shown.
-        membrane.update(buildParams(), QUALITY[settings.quality].rebuildBudget, settings.mode === 'membrane');
+        if (settings.mode === 'membrane') membrane.update(buildParams(), QUALITY[settings.quality].rebuildBudget);
 
         const room = rooms[settings.mode];
         if (room) {
@@ -331,7 +343,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
           }
           snapView = false;
         }
-        if (settings.camera === 'drift' && !settings.reducedMotion) driftT += dt;
+        if (playing && settings.camera === 'drift' && !settings.reducedMotion) driftT += dt;
 
         // --- render scene into a depth-less framebuffer with additive light ---
         const w = p.width, h = p.height;
@@ -420,24 +432,21 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
 
     const api: Visualiser & { _configureQuality?: () => void } = {
       reset(newSeed: number) {
+        needsRedraw = true;
         seed = newSeed >>> 0;
         membrane?.reset(seed);
         eachRoom((room) => room.reset(seed));
         splats?.reset(seed);
         lastAudioT = -1;
+        lastMediaTime = -1;
         headFrac = 0;
         quiet = 0;
         slowRms = 0;
         liveBass = 0;
         snapView = true;
       },
-      setIdle(next: boolean) {
-        if (next === idle) return;
-        idle = next;
-        idleMusic.reset();
-        api.reset(seed);
-      },
       setSettings(next: Partial<VisualSettings>) {
+        needsRedraw = true;
         const prev = { ...settings };
         Object.assign(settings, next);
         if (next.quality && next.quality !== prev.quality) api._configureQuality?.();

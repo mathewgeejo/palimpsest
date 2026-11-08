@@ -37,8 +37,6 @@ export async function searchYouTube(query: string, key: string, signal: AbortSig
     part: 'snippet',
     type: 'video',
     videoCategoryId: '10',
-    videoEmbeddable: 'true',
-    videoSyndicated: 'true',
     maxResults: '10',
     q: query,
     fields: 'items(id/videoId,snippet(title,channelTitle))',

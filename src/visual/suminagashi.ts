@@ -19,10 +19,10 @@ import { postVert } from './shaders';
  * moment sets the area of its drop, so the rings are a record of the dynamics.
  */
 
-const MAX_OPS = 96;
-const LIVE: Record<Quality, number> = { low: 40, medium: 72, high: 88 };
-const SCALE: Record<Quality, number> = { low: 0.6, medium: 0.85, high: 1 };
-const SAMPLES: Record<Quality, number> = { low: 1, medium: 2, high: 4 };
+const MAX_OPS = 48;
+const LIVE: Record<Quality, number> = { low: 10, medium: 18, high: 32 };
+const SCALE: Record<Quality, number> = { low: 0.45, medium: 0.65, high: 0.85 };
+const SAMPLES: Record<Quality, number> = { low: 1, medium: 1, high: 2 };
 
 const OP_DROP = 0, OP_TINE = 1, OP_VORTEX = 2, OP_WAVE = 3;
 
@@ -57,7 +57,7 @@ bool walk(inout vec2 p, out vec3 ink, out float edge, out float rim) {
       }
       p = a.xy + d * sqrt(1.0 - r2 / l2);
     } else if (a.w < 1.5) {
-      vec2 M = vec2(cos(a.z), sin(a.z));
+      vec2 M = vec2(a.z, b.z);
       vec2 N = vec2(-M.y, M.x);
       float dd = abs(dot(p - a.xy, N));
       p -= M * b.x * b.y / (dd + b.y);
@@ -66,7 +66,7 @@ bool walk(inout vec2 p, out vec3 ink, out float edge, out float rim) {
       float th = -b.x * exp(-dot(d, d) / (b.y * b.y));
       p = a.xy + rot(th) * d;
     } else {
-      vec2 M = vec2(cos(a.z), sin(a.z));
+      vec2 M = a.xy;
       vec2 N = vec2(-M.y, M.x);
       p -= M * b.x * sin(b.y * dot(p, N) + b.z);
     }
@@ -138,7 +138,7 @@ void main() {
     col = sampleAt(p0);
   }
   // Washi: soft cloudy formation and a few long fibres, fixed to the sheet.
-  float cloud = fbm(p0 * 5.0 + 11.0);
+  float cloud = 0.7 * noise(p0 * 5.0 + 11.0) + 0.3 * noise(p0 * 10.0 + 28.0);
   vec2 fp = rot(0.35) * p0;
   float fib = smoothstep(0.82, 1.0, noise(vec2(fp.x * 4.0, fp.y * 140.0))) * noise(fp * 9.0);
   col *= 0.965 + 0.05 * cloud - 0.035 * fib;
@@ -149,10 +149,25 @@ void main() {
 }
 `;
 
+const copyFrag = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uImage;
+out vec4 fragColor;
+void main() { fragColor = texture(uImage, vUv); }
+`;
+
 export class Suminagashi implements Room {
   private readonly base: PingPong;
   private readonly bake: p5.Shader;
   private readonly show: p5.Shader;
+  private readonly copy: p5.Shader;
+  private display: p5.Framebuffer | null = null;
+  private density = 1;
+  private adaptiveScale = 1;
+  private previousFrame = 0;
+  private frameCost = 0;
+  private nextTune = 0;
   private readonly opA = new Float32Array(MAX_OPS * 4);
   private readonly opB = new Float32Array(MAX_OPS * 4);
   private count = 0;
@@ -177,17 +192,31 @@ export class Suminagashi implements Room {
     this.base = new PingPong(p, SCALE);
     this.bake = p.createShader(postVert, bakeFrag);
     this.show = p.createShader(postVert, showFrag);
+    this.copy = p.createShader(postVert, copyFrag);
   }
 
-  get bufferSize() { return this.base.size; }
+  get bufferSize(): [number, number] {
+    return this.display ? [Math.round(this.display.width * this.display.pixelDensity()), Math.round(this.display.height * this.display.pixelDensity())] : [0, 0];
+  }
 
   configure(quality: Quality, density: number) {
+    if (quality !== this.quality || density !== this.density) {
+      this.display?.remove();
+      this.display = null;
+      this.adaptiveScale = 1;
+      this.frameCost = 0;
+      this.nextTune = 0;
+    }
     this.quality = quality;
-    this.base.configure(quality, density);
+    this.density = density;
+    this.base.configure(quality, Math.min(1, density));
   }
 
   // The base is sampled by uv, so it survives a resize without being cleared.
-  resize() {}
+  resize() {
+    this.display?.remove();
+    this.display = null;
+  }
 
   reset(seed: number) {
     this.rng = mulberry(seed ^ 0x2545f491);
@@ -207,6 +236,7 @@ export class Suminagashi implements Room {
 
   frame(f: AudioFeatures, dt: number, playing: boolean, s: VisualSettings) {
     const p = this.p;
+    this.tuneResolution(playing);
     this.base.ensure();
     if (!this.base.read) return;
     const aspect = p.width / p.height;
@@ -216,12 +246,18 @@ export class Suminagashi implements Room {
     }
 
     if (playing) this.listen(f, dt, s, aspect);
-    this.ripple = approach(this.ripple, playing && !f.silent ? 0.0009 + 0.0035 * f.bass : 0, dt, 0.25);
+    this.ripple = approach(this.ripple, playing && !f.silent ? 0.0009 + 0.0035 * f.bass : 0, dt, 0.06);
 
     const live = LIVE[this.quality];
     if (this.count >= live) this.flatten(this.count - Math.floor(live / 2), s, aspect);
 
-    p.clear();
+    // Walk the ink stack at the simulation resolution. The final full-size
+    // pass only upscales a texture instead of evaluating dozens of maps/pixel.
+    this.display ??= p.createFramebuffer({
+      width: p.width, height: p.height, density: Math.min(1, this.density) * SCALE[this.quality] * this.adaptiveScale,
+      depth: false, antialias: false, textureFiltering: p.LINEAR,
+    });
+    this.display.begin();
     fullscreen(p, this.show, (sh) => {
       sh.setUniform('uPrev', this.base.read!);
       this.setOps(sh, this.count, aspect, 0);
@@ -230,11 +266,33 @@ export class Suminagashi implements Room {
       sh.setUniform('uSeed', s.reducedMotion ? 0 : (p.frameCount % 61) * 7.31);
       sh.setUniform('uGrain', 0.022);
       sh.setUniform('uSamples', SAMPLES[this.quality]);
-      sh.setUniform('uPx', 1 / (p.height * p.pixelDensity()));
+      sh.setUniform('uPx', 1 / (this.display!.height * this.display!.pixelDensity()));
     });
+    this.display.end();
+    p.clear();
+    fullscreen(p, this.copy, (sh) => sh.setUniform('uImage', this.display!));
   }
 
-  destroy() { this.base.destroy(); }
+  destroy() { this.base.destroy(); this.display?.remove(); }
+
+  private tuneResolution(playing: boolean) {
+    const now = performance.now();
+    const elapsed = now - this.previousFrame;
+    this.previousFrame = now;
+    // Ignore pauses and initial shader compilation. Keep High explicitly crisp;
+    // Low/Medium can trade texture resolution for responsive audio feedback.
+    if (!playing || elapsed < 1 || elapsed > 500 || this.quality === 'high') return;
+    this.frameCost = this.frameCost ? this.frameCost * 0.8 + elapsed * 0.2 : elapsed;
+    if (now < this.nextTune) return;
+    this.nextTune = now + 1200;
+    const scale = this.frameCost > 40 ? Math.max(0.45, this.adaptiveScale * 0.8)
+      : this.frameCost < 20 ? Math.min(1, this.adaptiveScale * 1.1) : this.adaptiveScale;
+    if (scale === this.adaptiveScale) return;
+    this.adaptiveScale = scale;
+    this.display?.remove();
+    this.display = null;
+    this.base.configure(this.quality, Math.min(1, this.density) * scale);
+  }
 
   private listen(f: AudioFeatures, dt: number, s: VisualSettings, aspect: number) {
     const r = this.rng;
@@ -328,6 +386,9 @@ export class Suminagashi implements Room {
   private op(a0: number, a1: number, a2: number, type: number, b0: number, b1: number, b2: number, b3: number) {
     if (this.count >= MAX_OPS) return;
     const o = this.count * 4;
+    // Angles are uniform for a whole stroke; compute their trig once on CPU.
+    if (type === OP_TINE) { b2 = Math.sin(a2); a2 = Math.cos(a2); }
+    else if (type === OP_WAVE) { a0 = Math.cos(a2); a1 = Math.sin(a2); }
     this.opA[o] = a0; this.opA[o + 1] = a1; this.opA[o + 2] = a2; this.opA[o + 3] = type;
     this.opB[o] = b0; this.opB[o + 1] = b1; this.opB[o + 2] = b2; this.opB[o + 3] = b3;
     this.count++;

@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "setup:audio": "node scripts/setup-audio.mjs",
+    "start": "node server/start.mjs",
+    "test:audio": "node --test server/music.test.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"

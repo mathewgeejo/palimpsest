@@ -1,6 +1,5 @@
 import type { AudioFeatures, FeatureSource, TrackInfo } from '../types';
 import { renderDemo } from './demo';
-import type { YouTubePlayer } from './youtube';
 import type { YouTubeSong } from '../music/search';
 
 type EngineEvents = {
@@ -72,7 +71,6 @@ export class AudioEngine implements FeatureSource {
   private gain: GainNode | null = null;
   private objectUrl: string | null = null;
   private currentTrack: TrackInfo | null = null;
-  private youtube: YouTubePlayer | null = null;
   private volume = 0.8;
   private loading = false;
   private seeking = false;
@@ -101,7 +99,8 @@ export class AudioEngine implements FeatureSource {
 
   constructor() {
     this.element = new Audio();
-    this.element.preload = 'metadata';
+    this.element.preload = 'auto';
+    this.element.crossOrigin = 'anonymous';
     this.element.addEventListener('playing', () => {
       this.active = true;
       this.emit('play', undefined);
@@ -129,31 +128,30 @@ export class AudioEngine implements FeatureSource {
       this.emit('timeupdate', this.currentTime);
     });
     this.element.addEventListener('error', () => {
-      if (this.youtube) return;
       this.active = false;
       this.loading = false;
-      this.emit('error', "This file couldn't be decoded by your browser.");
+      this.emit('error', this.audioError());
     });
   }
 
   get playing(): boolean {
-    if (this.youtube) return !this.loading && this.youtube.playing;
     return this.active && !this.loading && !this.seeking && !this.element.paused && !this.element.ended;
   }
 
   get currentTime(): number {
-    if (this.youtube) return this.youtube.currentTime;
     return Number.isFinite(this.element.currentTime) ? this.element.currentTime : 0;
   }
 
   get duration(): number {
-    if (this.youtube) return this.youtube.duration;
     return Number.isFinite(this.element.duration) ? this.element.duration : 0;
   }
 
   get ended(): boolean {
-    if (this.youtube) return this.youtube.ended;
     return this.element.ended;
+  }
+
+  get paused(): boolean {
+    return this.element.paused;
   }
 
   get track(): TrackInfo | null {
@@ -176,7 +174,7 @@ export class AudioEngine implements FeatureSource {
 
   async ensureContext(): Promise<AudioContext> {
     if (!this.context) {
-      const context = new AudioContext();
+      const context = new AudioContext({ latencyHint: 'interactive' });
       const source = context.createMediaElementSource(this.element);
       const analyser = context.createAnalyser();
       const gain = context.createGain();
@@ -235,53 +233,36 @@ export class AudioEngine implements FeatureSource {
     return this.loadUrl(url, 'Demo — Palimpsest Study', DEMO_SEED, generation);
   }
 
-  async loadYouTube(song: YouTubeSong, player: YouTubePlayer): Promise<TrackInfo> {
+  async loadYouTube(song: YouTubeSong): Promise<TrackInfo> {
     const generation = this.beginReplacement();
-    this.youtube = player;
-    player.setVolume(this.volume);
-    const track: TrackInfo = { title: song.title, duration: 0, seed: fnv1a(song.id), source: 'youtube' };
-    this.currentTrack = track;
-    player.onStateChange = (state) => {
-      if (generation !== this.loadGeneration) return;
-      if (state === 1) {
-        this.loading = false;
-        track.duration = player.duration;
-        if (song.title === 'YouTube track' && player.title && track.title !== player.title) {
-          track.title = player.title;
-          this.emit('trackchange', track);
-        }
-        this.emit('play', undefined);
-      } else if (state === 2) this.emit('pause', undefined);
-      else if (state === 0) this.emit('ended', undefined);
-    };
-    player.onError = (message) => {
-      if (generation !== this.loadGeneration) return;
-      this.loading = false;
-      this.emit('error', message);
-    };
-    player.onBlocked = () => {
-      if (generation !== this.loadGeneration) return;
-      this.loading = false;
-      this.emit('pause', undefined);
-    };
-    this.emit('trackchange', track);
+    const controller = new AbortController();
+    const cancel = (): void => controller.abort();
+    this.cancelLoad = cancel;
     try {
-      await player.load(song);
+      // Resume inside the selection gesture, before the network request.
+      const context = await this.ensureContext();
+      if (context.state !== 'running') await context.resume();
+      const response = await fetch(`/api/music/tracks/${encodeURIComponent(song.id)}`, {
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(45_000)]),
+      });
+      const data = await response.json() as { url?: string; title?: string; error?: string };
+      if (!response.ok) throw new Error(data.error || 'Could not load this track’s audio. Try another song.');
       if (generation !== this.loadGeneration) throw new DOMException('Track load was superseded.', 'AbortError');
-      this.loading = false;
-      return track;
+      const expectedUrl = `/api/music/audio/${song.id}`;
+      if (data.url !== expectedUrl) throw new Error('The audio service returned an unsupported track.');
+      if (this.cancelLoad === cancel) this.cancelLoad = null;
+      return await this.loadUrl(expectedUrl, data.title || song.title, fnv1a(song.id), generation, 'youtube');
     } catch (error) {
       if (generation === this.loadGeneration) this.loading = false;
+      if (error instanceof SyntaxError) throw new Error('The audio service is unavailable. Restart the app server and try again.');
       throw error;
+    } finally {
+      if (this.cancelLoad === cancel) this.cancelLoad = null;
     }
   }
 
   async play(): Promise<void> {
     if (!this.currentTrack || this.loading) {
-      return;
-    }
-    if (this.youtube) {
-      this.youtube.play();
       return;
     }
     const context = await this.ensureContext();
@@ -292,15 +273,13 @@ export class AudioEngine implements FeatureSource {
   }
 
   pause(): void {
-    if (this.youtube) {
-      this.youtube.pause();
-      return;
-    }
     this.element.pause();
   }
 
   async togglePlay(): Promise<void> {
-    if (this.playing) {
+    // A waiting/seeking element is still a requested playback session: the
+    // transport must be able to pause it even before samples start advancing.
+    if (!this.element.paused && !this.element.ended) {
       this.pause();
     } else {
       await this.play();
@@ -313,8 +292,7 @@ export class AudioEngine implements FeatureSource {
     }
     const end = this.duration || Number.MAX_SAFE_INTEGER;
     const position = Math.max(0, Math.min(end, seconds));
-    if (this.youtube) this.youtube.seek(position);
-    else this.element.currentTime = position;
+    this.element.currentTime = position;
     this.resetAnalysis();
     this.emit('seek', this.currentTime);
   }
@@ -324,8 +302,7 @@ export class AudioEngine implements FeatureSource {
       return;
     }
     if (this.currentTime > 0) {
-      if (this.youtube) this.youtube.seek(0);
-      else this.element.currentTime = 0;
+      this.element.currentTime = 0;
     }
     this.emit('restart', undefined);
     this.resetAnalysis();
@@ -333,7 +310,6 @@ export class AudioEngine implements FeatureSource {
 
   setVolume(value: number): void {
     this.volume = Math.max(0, Math.min(1, value));
-    this.youtube?.setVolume(this.volume);
     if (this.gain) {
       this.gain.gain.setTargetAtTime(this.volume, this.gain.context.currentTime, 0.015);
     }
@@ -364,7 +340,7 @@ export class AudioEngine implements FeatureSource {
     for (let index = 0; index < this.featurePeaks.length; index += 1) {
       this.featurePeaks[index] = Math.max(this.minimumPeak(index), this.featurePeaks[index]! * decayFactor);
     }
-    if (this.youtube || !this.playing || !this.analyser || !this.context) {
+    if (!this.playing || !this.analyser || !this.context) {
       this.decayFeatures(out, frameDt);
       return;
     }
@@ -457,8 +433,8 @@ export class AudioEngine implements FeatureSource {
     this.firstSpectrum = false;
   }
 
-  private async loadUrl(url: string, title: string, seed: number, generation: number): Promise<TrackInfo> {
-    this.objectUrl = url;
+  private async loadUrl(url: string, title: string, seed: number, generation: number, source: 'local' | 'youtube' = 'local'): Promise<TrackInfo> {
+    this.objectUrl = url.startsWith('blob:') ? url : null;
     try {
       const context = await this.ensureContext();
       if (context.state !== 'running') {
@@ -493,7 +469,7 @@ export class AudioEngine implements FeatureSource {
           return;
         }
         this.loading = false;
-        const track = { title, duration: this.duration, seed };
+        const track: TrackInfo = { title, duration: this.duration, seed, source };
         this.currentTrack = track;
         this.resetAnalysis();
         this.emit('trackchange', track);
@@ -507,7 +483,7 @@ export class AudioEngine implements FeatureSource {
         }
         this.loading = false;
         this.currentTrack = null;
-        const message = "This file couldn't be decoded by your browser.";
+        const message = this.audioError(source);
         this.emit('error', message);
         reject(new Error(message));
       };
@@ -522,8 +498,6 @@ export class AudioEngine implements FeatureSource {
   private beginReplacement(): number {
     const generation = ++this.loadGeneration;
     this.cancelLoad?.();
-    this.youtube?.stop();
-    this.youtube = null;
     this.element.pause();
     this.active = false;
     this.loading = true;
@@ -537,6 +511,12 @@ export class AudioEngine implements FeatureSource {
     this.currentTrack = null;
     this.resetAnalysis();
     return generation;
+  }
+
+  private audioError(source = this.currentTrack?.source): string {
+    return source === 'youtube'
+      ? 'This audio stream could not be played. Try another song or a local audio file.'
+      : "This file couldn't be decoded by your browser.";
   }
 
   private bandMean(lowHz: number, highHz: number, binHz: number, nyquist: number): number {

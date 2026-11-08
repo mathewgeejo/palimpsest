@@ -248,6 +248,13 @@ export class Membrane {
     this.version++;
   }
 
+  get needsBuild(): boolean {
+    for (const chunk of this.chunks.values()) {
+      if (chunk.dirty || chunk.version !== this.version) return true;
+    }
+    return false;
+  }
+
   /**
    * Build dirty / outdated chunks. Rebuild the live chunk first when visible;
    * offscreen, finish each chunk once so switching back preserves the history.

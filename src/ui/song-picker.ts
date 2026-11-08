@@ -51,7 +51,7 @@ export class SongPicker {
           <button class="song-forget-key" type="button">Forget saved key</button>
         </form>
       </details>
-      <p class="song-footnote">No account connection needed. Links work without a search key. YouTube tracks play in a visible video player with gallery animation; upload audio for music-reactive visuals.</p>
+      <p class="song-footnote">Audio only — no music video. The visuals follow the actual song and freeze when you pause. Track links work without a search key.</p>
     `;
     container.append(this.dialog);
     this.input = this.dialog.querySelector<HTMLInputElement>('#song-query')!;

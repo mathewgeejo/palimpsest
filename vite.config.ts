@@ -1,6 +1,12 @@
 import { defineConfig } from 'vite';
+import { createMusicHandler } from './server/music.mjs';
 
 export default defineConfig({
+  plugins: [{
+    name: 'audio-only-playback',
+    configureServer(server) { server.middlewares.use(createMusicHandler()); },
+    configurePreviewServer(server) { server.middlewares.use(createMusicHandler()); },
+  }],
   build: {
     // p5.js is a single large module; the app has no other heavy dependencies.
     chunkSizeWarningLimit: 1400,
