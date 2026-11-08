@@ -195,6 +195,8 @@ export class Rupture implements Room {
   private prevOnset = 0;
   private spinSign = 1;
   private needsClear = true;
+  private quality: Quality = 'medium';
+  private density = 1;
 
   constructor(private readonly p: p5) {
     this.feed = p.createShader(postVert, feedFrag);
@@ -202,10 +204,21 @@ export class Rupture implements Room {
   }
 
   configure(quality: Quality, density: number) {
+    if (quality === this.quality && density === this.density) return;
+    this.quality = quality;
+    this.density = density;
+    if (this.a) this.allocate();
+  }
+
+  private allocate() {
+    const { quality, density } = this;
     const previous = this.b;
     this.a?.remove();
     const make = () => {
-      const opts = { depth: false, antialias: false, density: density * SCALE[quality], textureFiltering: this.p.LINEAR };
+      const opts = {
+        depth: false, antialias: false, width: this.p.width, height: this.p.height,
+        density: density * SCALE[quality], textureFiltering: this.p.LINEAR,
+      };
       try {
         return this.p.createFramebuffer({ ...opts, format: this.p.HALF_FLOAT });
       } catch {
@@ -214,8 +227,6 @@ export class Rupture implements Room {
     };
     this.a = make();
     this.b = make();
-    this.a.pixelDensity(density * SCALE[quality]);
-    this.b.pixelDensity(density * SCALE[quality]);
     if (!previous) {
       this.needsClear = true;
       return;
@@ -265,6 +276,7 @@ export class Rupture implements Room {
 
   frame(f: AudioFeatures, dt: number, playing: boolean, s: VisualSettings, glowTaps: number) {
     const p = this.p;
+    if (!this.a) this.allocate();
     if (!this.a || !this.b) return;
     const w = p.width, h = p.height;
     if (this.needsClear) {
@@ -311,7 +323,6 @@ export class Rupture implements Room {
     if (playing) {
       const [src, dst] = [this.b, this.a];
       dst.begin();
-      p.clear();
       p.push();
       p.noStroke();
       p.shader(this.feed);

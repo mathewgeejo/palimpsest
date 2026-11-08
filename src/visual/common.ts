@@ -55,6 +55,7 @@ export class PingPong {
   constructor(private readonly p: p5, private readonly scale: Record<Quality, number>) {}
 
   configure(quality: Quality, density: number) {
+    if (quality === this.quality && density === this.density) return;
     this.quality = quality;
     this.density = density;
     if (this.read) this.allocate(true);
@@ -81,7 +82,8 @@ export class PingPong {
     const p = this.p;
     const src = this.read!, dst = this.write!;
     dst.begin();
-    p.clear();
+    // These depth-less passes write an opaque colour to every pixel.
+    // Clearing first would write the entire simulation buffer twice.
     fullscreen(p, shader, (sh) => {
       sh.setUniform('uPrev', src);
       set(sh);
@@ -102,6 +104,7 @@ export class PingPong {
   private make() {
     const opts = {
       depth: false, antialias: false, channels: this.p.RGBA,
+      width: this.p.width, height: this.p.height,
       density: this.density * this.scale[this.quality], textureFiltering: this.p.LINEAR,
     };
     let fb: p5.Framebuffer;
@@ -110,7 +113,6 @@ export class PingPong {
     } catch {
       fb = this.p.createFramebuffer(opts);
     }
-    fb.pixelDensity(this.density * this.scale[this.quality]);
     return fb;
   }
 

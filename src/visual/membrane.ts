@@ -28,6 +28,8 @@ export interface BuildParams {
 
 interface Chunk {
   geom: p5.Geometry | null;
+  columns: number;
+  loud: number[];
   dirty: boolean;
   /** Number of rows (of this chunk) included the last time it was built. */
   builtRows: number;
@@ -100,6 +102,10 @@ export class Membrane {
 
   // Scratch buffers for geometry building (reused).
   private scratchPos = new Float32Array(0);
+  private scratchChunk = -1;
+  private scratchVersion = -1;
+  private scratchColumns = 0;
+  private readonly scratchRows: number[] = [];
 
   constructor(private p: p5, seed: number) {
     this.noise = new Noise1(seed);
@@ -111,6 +117,8 @@ export class Membrane {
     for (const c of this.chunks.values()) if (c.geom) this.p.freeGeometry(c.geom);
     this.chunks.clear();
     this.total = 0;
+    this.boundsTotal = -1;
+    this.scratchChunk = -1;
     this.noise.reseed(seed);
     this.seedRand = mulberry(seed ^ 0x9e3779b9);
     const r = this.seedRand;
@@ -140,17 +148,26 @@ export class Membrane {
 
   private lastParams: BuildParams | null = null;
   private readonly scratch = new Float32Array(3);
+  private readonly rowFrame = new Float64Array(9);
+  private readonly cachedBounds = new Float32Array(4);
+  private boundsTotal = -1;
+  private boundsFirst = -1;
 
   /** Approximate bounding sphere (cx, cy, cz, r) of rows [minRow, total) in model space. */
   bounds(minRow: number, out: Float32Array): boolean {
     const prm = this.lastParams;
     if (!prm || this.total < 2) return false;
     const first = Math.max(this.oldest, Math.floor(minRow));
+    if (this.boundsTotal === this.total && this.boundsFirst === first) {
+      out.set(this.cachedBounds);
+      return true;
+    }
     const step = Math.max(1, Math.floor((this.total - first) / 90));
     let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
     const p = this.scratch;
     for (let n = this.total - 1; n >= first; n -= step) {
       const o = (n % CAP) * STRIDE;
+      this.prepareRow(o);
       for (let k = 0; k <= 4; k++) {
         this.shellPoint(o, k / 4, prm, p, 0);
         if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0];
@@ -160,6 +177,9 @@ export class Membrane {
     }
     out[0] = (x0 + x1) / 2; out[1] = (y0 + y1) / 2; out[2] = (z0 + z1) / 2;
     out[3] = 0.5 * Math.hypot(x1 - x0, y1 - y0, z1 - z0);
+    this.cachedBounds.set(out);
+    this.boundsTotal = this.total;
+    this.boundsFirst = first;
     return true;
   }
 
@@ -211,7 +231,7 @@ export class Membrane {
     const k = Math.floor(n / CHUNK);
     const c = this.chunks.get(k);
     if (c) c.dirty = true;
-    else this.chunks.set(k, { geom: null, dirty: true, builtRows: 0, version: -1 });
+    else this.chunks.set(k, { geom: null, columns: 0, loud: [], dirty: true, builtRows: 0, version: -1 });
 
     // Drop chunks that fell out of the bounded history.
     const minChunk = Math.floor(this.oldest / CHUNK) - 1;
@@ -229,15 +249,22 @@ export class Membrane {
   }
 
   /**
-   * Build dirty / outdated chunks. The live (newest) chunk is always rebuilt first;
-   * older chunks are rebuilt at most `budget` per call so settings changes don't stall.
+   * Build dirty / outdated chunks. Rebuild the live chunk first when visible;
+   * offscreen, finish each chunk once so switching back preserves the history.
+   * Rebuild older chunks at most `budget` per call so settings changes don't stall.
    */
-  update(params: BuildParams, budget: number) {
+  update(params: BuildParams, budget: number, includeLive = true) {
+    if (!this.lastParams || params.tension !== this.lastParams.tension ||
+      params.detail !== this.lastParams.detail || params.onsetGain !== this.lastParams.onsetGain) {
+      this.boundsTotal = -1;
+      this.scratchChunk = -1;
+    }
     this.lastParams = params;
     if (this.total === 0) return;
     const liveK = Math.floor((this.total - 1) / CHUNK);
     const live = this.chunks.get(liveK);
-    if (live && (live.dirty || live.version !== this.version)) this.build(liveK, live, params);
+    if (live && (includeLive || this.total % CHUNK === 0) &&
+      (live.dirty || live.version !== this.version)) this.build(liveK, live, params);
     let spent = 0;
     for (let k = liveK - 1; k >= 0 && spent < budget; k--) {
       const c = this.chunks.get(k);
@@ -280,7 +307,8 @@ export class Membrane {
     for (let n = r0; n <= r1; n++) if (n % step === 0) list.push(n);
     if (isLive && list[list.length - 1] !== r1) list.push(r1);
 
-    if (c.geom) { p.freeGeometry(c.geom); c.geom = null; }
+    const previous = c.geom;
+    if (previous) { p.freeGeometry(previous); c.geom = null; }
     c.dirty = false;
     c.version = this.version;
     c.builtRows = r1 - r0 + 1;
@@ -288,23 +316,39 @@ export class Membrane {
 
     const nr = list.length;
     const need = nr * cols * 3;
-    if (this.scratchPos.length < need) this.scratchPos = new Float32Array(need);
+    // Reserve one whole chunk so growing it does not allocate on every row.
+    if (this.scratchPos.length < need) this.scratchPos = new Float32Array((CHUNK + 1) * cols * 3);
     const pos = this.scratchPos;
+    const cached = this.scratchChunk === k && this.scratchVersion === this.version && this.scratchColumns === cols;
+    let firstChanged = nr;
     for (let i = 0; i < nr; i++) {
+      if (cached && this.scratchRows[i] === list[i]) continue;
+      firstChanged = Math.min(firstChanged, i);
       const o = (list[i] % CAP) * STRIDE;
+      this.prepareRow(o);
       for (let j = 0; j < cols; j++) {
         this.shellPoint(o, j / (cols - 1), params, pos, (i * cols + j) * 3);
       }
     }
+    this.scratchChunk = k;
+    this.scratchVersion = this.version;
+    this.scratchColumns = cols;
+    this.scratchRows.length = nr;
+    for (let i = 0; i < nr; i++) this.scratchRows[i] = list[i];
 
     const geom = new p5.Geometry(1, 1);
-    const verts: p5.Vector[] = new Array(nr * cols);
-    const norms: p5.Vector[] = new Array(nr * cols);
-    const uvs: number[] = new Array(nr * cols * 2);
-    const colors: number[] = new Array(nr * cols * 4);
-    const loud: number[] = new Array(nr * cols);
+    const verts = previous?.vertices ?? [];
+    const norms = previous?.vertexNormals ?? [];
+    const uvs = (previous?.uvs ?? []) as number[];
+    const colors = (previous as unknown as { vertexColors: number[] } | null)?.vertexColors ?? [];
+    const loud = c.loud;
+    verts.length = norms.length = loud.length = nr * cols;
+    uvs.length = nr * cols * 2;
+    colors.length = nr * cols * 4;
     const rows = this.rows;
-    for (let i = 0; i < nr; i++) {
+    // Appending a row only changes that row and the preceding row's normals.
+    const firstVertexRow = cached && previous && c.columns === cols ? Math.max(0, firstChanged - 1) : 0;
+    for (let i = firstVertexRow; i < nr; i++) {
       const o = (list[i] % CAP) * STRIDE;
       const iPrev = i > 0 ? i - 1 : i;
       const iNext = i < nr - 1 ? i + 1 : i;
@@ -320,8 +364,10 @@ export class Membrane {
         let nx = sy * tz - sz * ty, ny = sz * tx - sx * tz, nz = sx * ty - sy * tx;
         const nl = Math.hypot(nx, ny, nz) || 1;
         nx /= nl; ny /= nl; nz /= nl;
-        verts[idx] = p.createVector(pos[b], pos[b + 1], pos[b + 2]);
-        norms[idx] = p.createVector(nx, ny, nz);
+        if (verts[idx]) verts[idx].set(pos[b], pos[b + 1], pos[b + 2]);
+        else verts[idx] = p.createVector(pos[b], pos[b + 1], pos[b + 2]);
+        if (norms[idx]) norms[idx].set(nx, ny, nz);
+        else norms[idx] = p.createVector(nx, ny, nz);
         uvs[idx * 2] = j / (cols - 1);
         uvs[idx * 2 + 1] = list[i];
         colors[idx * 4] = rows[o + TREBLE];
@@ -331,13 +377,15 @@ export class Membrane {
         loud[idx] = rows[o + RMS];
       }
     }
-    const faces: number[][] = [];
-    for (let i = 0; i < nr - 1; i++) {
+    const faces = (previous && c.columns === cols ? previous.faces : []) as number[][];
+    const facesPerRow = (cols - 1) * 2;
+    for (let i = Math.floor(faces.length / facesPerRow); i < nr - 1; i++) {
       for (let j = 0; j < cols - 1; j++) {
         const a = i * cols + j, b2 = a + 1, c2 = a + cols, d = c2 + 1;
         faces.push([a, b2, c2], [b2, d, c2]);
       }
     }
+    faces.length = (nr - 1) * facesPerRow;
     geom.vertices = verts;
     geom.vertexNormals = norms;
     geom.uvs = uvs;
@@ -345,6 +393,25 @@ export class Membrane {
     geom.faces = faces as unknown as typeof geom.faces;
     geom.vertexProperty('aLoud', loud, 1);
     c.geom = geom;
+    c.columns = cols;
+  }
+
+  /** The growth axis is constant across a row; calculate it once for all columns. */
+  private prepareRow(o: number) {
+    const r = this.rows;
+    const ta = r[o + TILT_A], tb = r[o + TILT_B];
+    const ca = Math.cos(ta), sa = Math.sin(ta), cb = Math.cos(tb), sb = Math.sin(tb);
+    const ax = ca * cb, ay = sa, az = ca * sb;
+    // N1 = normalize(up - (up·A)A), up = (0,1,0)
+    let n1x = -ay * ax, n1y = 1 - ay * ay, n1z = -ay * az;
+    const l1 = Math.hypot(n1x, n1y, n1z) || 1;
+    n1x /= l1; n1y /= l1; n1z /= l1;
+    // N2 = A × N1
+    const n2x = ay * n1z - az * n1y, n2y = az * n1x - ax * n1z, n2z = ax * n1y - ay * n1x;
+    const f = this.rowFrame;
+    f[0] = ax; f[1] = ay; f[2] = az;
+    f[3] = n1x; f[4] = n1y; f[5] = n1z;
+    f[6] = n2x; f[7] = n2y; f[8] = n2z;
   }
 
   /** Position of the membrane at row record `o`, across-parameter s in [0,1]. */
@@ -373,21 +440,11 @@ export class Membrane {
     radius = Math.max(0.04, radius);
 
     const phi = theta + 0.55 * u * this.twistSign;
-
-    // Growth axis, gently re-oriented by sustained spectral change.
-    const ta = r[o + TILT_A], tb = r[o + TILT_B];
-    const ca = Math.cos(ta), sa = Math.sin(ta), cb = Math.cos(tb), sb = Math.sin(tb);
-    const ax = ca * cb, ay = sa, az = ca * sb;
-    // N1 = normalize(up - (up·A)A), up = (0,1,0)
-    let n1x = -ay * ax, n1y = 1 - ay * ay, n1z = -ay * az;
-    const l1 = Math.hypot(n1x, n1y, n1z) || 1;
-    n1x /= l1; n1y /= l1; n1z /= l1;
-    // N2 = A × N1
-    const n2x = ay * n1z - az * n1y, n2y = az * n1x - ax * n1z, n2z = ax * n1y - ay * n1x;
+    const f = this.rowFrame;
 
     const cp = Math.cos(phi) * radius, sp = Math.sin(phi) * radius;
-    out[oi] = ax * along + cp * n1x + sp * n2x + n2x * bend;
-    out[oi + 1] = ay * along + cp * n1y + sp * n2y + n2y * bend;
-    out[oi + 2] = az * along + cp * n1z + sp * n2z + n2z * bend;
+    out[oi] = f[0] * along + cp * f[3] + sp * f[6] + f[6] * bend;
+    out[oi + 1] = f[1] * along + cp * f[4] + sp * f[7] + f[7] * bend;
+    out[oi + 2] = f[2] * along + cp * f[5] + sp * f[8] + f[8] * bend;
   }
 }

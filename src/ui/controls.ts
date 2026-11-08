@@ -64,6 +64,7 @@ export class Controls {
   private placardTimer: number | null = null;
   private draggingSeek = false;
   private previousPlaying = false;
+  private playbackState = '';
 
   constructor(private readonly engine: AudioEngine, callbacks: ControlCallbacks) {
     this.callbacks = callbacks;
@@ -289,9 +290,12 @@ export class Controls {
     const playing = this.engine.playing;
     const state = ended ? 'replay' : playing ? 'pause' : 'play';
     const label = ended ? 'Replay' : playing ? 'Pause' : 'Play';
-    this.playButton.innerHTML = svg(icons[state]);
-    this.playButton.setAttribute('aria-label', label);
-    this.playButton.title = label;
+    if (state !== this.playbackState) {
+      this.playbackState = state;
+      this.playButton.innerHTML = svg(icons[state]);
+      this.playButton.setAttribute('aria-label', label);
+      this.playButton.title = label;
+    }
     if (playing) {
       if (!this.previousPlaying) {
         this.scheduleFade();
@@ -305,10 +309,13 @@ export class Controls {
 
   updateTime(): void {
     const duration = this.engine.duration;
-    this.duration.textContent = formatTime(duration);
+    const durationText = formatTime(duration);
+    if (this.duration.textContent !== durationText) this.duration.textContent = durationText;
     if (!this.draggingSeek) {
-      this.elapsed.textContent = formatTime(this.engine.currentTime);
-      this.seek.value = duration > 0 ? String(Math.round((this.engine.currentTime / duration) * 1000)) : '0';
+      const elapsedText = formatTime(this.engine.currentTime);
+      if (this.elapsed.textContent !== elapsedText) this.elapsed.textContent = elapsedText;
+      const seekValue = duration > 0 ? String(Math.round((this.engine.currentTime / duration) * 1000)) : '0';
+      if (this.seek.value !== seekValue) this.seek.value = seekValue;
     }
   }
 

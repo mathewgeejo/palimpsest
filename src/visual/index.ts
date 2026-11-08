@@ -82,7 +82,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
     const idleMusic = new IdleMusic();
     let memShader: p5.Shader;
     let postShader: p5.Shader;
-    let scene: p5.Framebuffer;
+    let scene: p5.Framebuffer | null = null;
     let failed = false;
 
     const features: AudioFeatures = createEmptyFeatures();
@@ -128,14 +128,23 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
     });
 
     const sketch = (p: p5) => {
+      const ensureScene = () => {
+        if (!scene) {
+          const q = QUALITY[settings.quality];
+          scene = p.createFramebuffer({
+            width: p.width, height: p.height, depth: false, antialias: false,
+            density: p.pixelDensity() * q.sceneScale,
+          });
+        }
+        return scene;
+      };
+
       const configureQuality = () => {
         const q = QUALITY[settings.quality];
         const density = Math.min(window.devicePixelRatio || 1, q.maxDensity);
-        p.pixelDensity(density);
-        if (scene) scene.remove();
-        scene = p.createFramebuffer({ depth: false, antialias: false, density: density * q.sceneScale });
-        // An explicit density opts the buffer out of p5's auto-sizing, so resizes are handled below.
-        scene.pixelDensity(density * q.sceneScale);
+        if (p.pixelDensity() !== density) p.pixelDensity(density);
+        scene?.remove();
+        scene = null;
         stats.quality = settings.quality;
         eachRoom((room) => room.configure(settings.quality, density));
         splats?.setQuality(settings.quality);
@@ -199,7 +208,8 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
       };
 
       p.draw = () => {
-        if (failed) return;
+        // noLoop() can leave one animation callback queued by p5.
+        if (failed || document.hidden) return;
         const now = performance.now();
         const dt = Math.min(0.1, Math.max(0.0005, (now - lastWall) / 1000));
         lastWall = now;
@@ -278,7 +288,9 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
           invalidateAt = 0;
           membrane.invalidate();
         }
-        membrane.update(buildParams(), QUALITY[settings.quality].rebuildBudget);
+        // Keep completed history ready for room switches, but only rebuild the
+        // growing chunk on every audio row when the sculpture is actually shown.
+        membrane.update(buildParams(), QUALITY[settings.quality].rebuildBudget, settings.mode === 'membrane');
 
         const room = rooms[settings.mode];
         if (room) {
@@ -323,9 +335,10 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
 
         // --- render scene into a depth-less framebuffer with additive light ---
         const w = p.width, h = p.height;
+        const sceneBuffer = ensureScene();
         const unit = Math.min(Math.min(w * 0.44, h * 0.47) / view.r, Math.min(w, h * 1.4) * 0.3);
         const camZ = h / 2 / Math.tan(FOV / 2);
-        scene.begin();
+        sceneBuffer.begin();
         p.clear();
         p.perspective(FOV, w / h, camZ * 0.1, camZ * 10);
         p.camera(0, 0, camZ, 0, 0, 0, 0, 1, 0);
@@ -359,7 +372,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
           p.blendMode(p.BLEND);
           p.pop();
         }
-        scene.end();
+        sceneBuffer.end();
 
         // --- composite: tone map, restrained glow, ground, grain ---
         p.clear();
@@ -367,7 +380,7 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         p.noStroke();
         p.shader(postShader);
         const q = QUALITY[settings.quality];
-        postShader.setUniform('uScene', scene);
+        postShader.setUniform('uScene', sceneBuffer);
         postShader.setUniform('uRes', [w, h]);
         postShader.setUniform('uGlow', q.glowTaps > 0 ? 0.55 : 0);
         postShader.setUniform('uGlowTaps', q.glowTaps);
@@ -383,8 +396,8 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
         stats.frameRadius = +view.r.toFixed(3);
         stats.chunks = membrane.chunkCount;
         stats.canvas = [w * p.pixelDensity(), h * p.pixelDensity()];
-        const sd = (scene as unknown as { pixelDensity(): number }).pixelDensity();
-        stats.scene = [Math.round(scene.width * sd), Math.round(scene.height * sd)];
+        const sd = sceneBuffer.pixelDensity();
+        stats.scene = [Math.round(sceneBuffer.width * sd), Math.round(sceneBuffer.height * sd)];
       };
 
       const smooth = (a: number, b: number, x: number) => {
@@ -396,6 +409,14 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
     };
 
     const resizeObserver = new ResizeObserver(() => instance?.windowResized?.(undefined as never));
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        instance.noLoop();
+      } else if (!failed) {
+        lastWall = performance.now();
+        instance.loop();
+      }
+    };
 
     const api: Visualiser & { _configureQuality?: () => void } = {
       reset(newSeed: number) {
@@ -433,15 +454,20 @@ export async function createVisualiser(opts: VisualiserOptions): Promise<Visuali
       },
       destroy() {
         resizeObserver.disconnect();
+        document.removeEventListener('visibilitychange', onVisibilityChange);
         membrane?.reset(0);
         eachRoom((room) => room.destroy());
         splats?.destroy();
+        for (const pending of exportResolvers) pending.reject(new Error('The visualiser was closed.'));
+        exportResolvers = [];
         instance.remove();
       },
     };
 
     const instance = new p5(sketch, container);
     resizeObserver.observe(container);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    onVisibilityChange();
     (window as unknown as { __palimpsest?: { stats: VisualStats } }).__palimpsest = {
       get stats() {
         stats.vertices = membrane ? membrane.vertexCount() : 0;
